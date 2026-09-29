@@ -1,0 +1,35 @@
+# --- Orquestación de agentes (versiones fijas, ya validadas en MCPMULTIAgentsResearch) ---
+langgraph==1.2.11
+langgraph-checkpoint-sqlite>=1.0.0
+langchain-core==1.6.3
+langchain-classic==1.0.8
+langchain-openai==1.6.2
+langchain-text-splitters>=1.0.0
+
+# --- MCP (cliente + servidor propio de Oracle Object Storage) ---
+mcp==1.30.0
+langchain-mcp-adapters==0.3.2
+
+# --- RAG / vectorstore (versiones fijas, ya validadas) ---
+langchain-chroma==1.1.0
+chromadb==1.5.9
+langchain-huggingface>=0.1.0
+
+# --- LLM (usado por llm_client.py para estimar tokens en el rate limiter) ---
+tiktoken>=0.8.0
+
+# --- Oracle Cloud (SDK oficial, nuevo en este proyecto) ---
+oci>=2.129.0
+
+# --- Extracción de documentos ---
+pypdf>=5.0.0
+
+# --- Exportación PDF / Markdown ---
+reportlab>=4.2.0
+
+# --- Interfaz ---
+streamlit>=1.38.0
+
+# --- Config / validación ---
+python-dotenv==1.2.3
+pydantic==2.13.5
