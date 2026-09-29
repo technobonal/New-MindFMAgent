@@ -1,0 +1,8 @@
+venv/
+.env
+__pycache__/
+*.pyc
+checkpoints.sqlite
+chroma_db/
+.streamlit/secrets.toml
+ocid1.user.oc1..aaaaaaaao3kezm7ersyfukire7x5gog6glyu5snkhq2lpq2vcij6spfgpzza 
