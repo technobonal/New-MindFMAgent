@@ -23,7 +23,6 @@ Tools expuestas:
   - guardar_resultado_formateado(nombre_archivo, contenido)
 """
 
-import sys  # agregar si no está
 import base64
 import io
 import os
@@ -43,13 +42,30 @@ PREFIJO_GENERADOS = "generados/"
 
 server = MCPServer("nuevamente-object-storage")
 
+# --------------------------------------------------------------------------
+# Cliente OCI cacheado: se autentica y resuelve el namespace UNA sola vez
+# por proceso, en vez de repetirlo en cada llamada a una tool.
+# --------------------------------------------------------------------------
+
+_client_cache = None
+_namespace_cache = None
+
 
 def _get_client():
     """
     En la VM de producción usa Instance Principal automáticamente.
     En desarrollo local, seteá OCI_LOCAL_DEV=1 para saltar directo al
     config file y evitar la demora larga del timeout de Instance Principal.
+
+    Cachea el cliente y el namespace en memoria: la autenticación y el
+    get_namespace() solo se hacen la primera vez que se llama dentro de
+    este proceso; las siguientes llamadas devuelven el cache directo.
     """
+    global _client_cache, _namespace_cache
+
+    if _client_cache is not None:
+        return _client_cache, _namespace_cache
+
     if os.environ.get("OCI_LOCAL_DEV") == "1":
         config = oci.config.from_file()
         client = oci.object_storage.ObjectStorageClient(config)
@@ -62,6 +78,9 @@ def _get_client():
             client = oci.object_storage.ObjectStorageClient(config)
 
     namespace = client.get_namespace().data
+
+    _client_cache = client
+    _namespace_cache = namespace
     return client, namespace
 
 
