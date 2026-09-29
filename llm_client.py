@@ -8,9 +8,11 @@ MCPMULTIAgentsResearch a LangChain nativo (Opción A): en vez del loop
 manual con litellm, arma un ChatOpenAI con .with_fallbacks(), reordenado
 según el cupo real que reporta el RateLimiter compartido.
 
-Cadena: openai/gpt-oss-120b -> openai/gpt-oss-20b -> qwen/qwen3.6-27b
+Cadena: openai/gpt-oss-120b -> openai/gpt-oss-20b -> qwen/qwen3.8-27b
 (sección 6 del spec -- misma cascada reusada tal cual del otro proyecto,
-al ser agnóstica de frontend/flujo).
+al ser agnóstica de frontend/flujo). Nota: el tercer modelo es
+qwen/qwen3.8-27b, no qwen3.6-27b -- verificado contra los límites reales
+habilitados en la cuenta de Groq (console.groq.com/settings/limits).
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ logger = logging.getLogger("nuevamente.llm_client")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
-_DEFAULT_CHAIN = "openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.6-27b"
+_DEFAULT_CHAIN = "openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b"
 GROQ_MODEL_CHAIN = [
     m.strip() for m in os.getenv("GROQ_MODEL_CHAIN", _DEFAULT_CHAIN).split(",") if m.strip()
 ]

@@ -33,17 +33,18 @@ except Exception:
 
 # Límites reales confirmados del free tier de Groq para la cadena de
 # este proyecto (openai/gpt-oss-120b -> openai/gpt-oss-20b ->
-# qwen/qwen3.6-27b, sección 6 del spec). Si la cuenta cambia de plan,
-# actualizar acá.
+# qwen/qwen3.8-27b, sección 6 del spec). Verificados contra
+# console.groq.com/settings/limits el 29/09/2026. Si la cuenta cambia
+# de plan, actualizar acá.
 MODEL_TPM_LIMITS: dict[str, int] = {
     "openai/gpt-oss-120b": 8000,
     "openai/gpt-oss-20b": 8000,
-    "qwen/qwen3.6-27b": 8000,  # PREVIEW en Groq: puede discontinuarse sin aviso
+    "qwen/qwen3.8-27b": 8000,
 }
 MODEL_RPM_LIMITS: dict[str, int] = {
     "openai/gpt-oss-120b": 30,
     "openai/gpt-oss-20b": 30,
-    "qwen/qwen3.6-27b": 30,
+    "qwen/qwen3.8-27b": 30,
 }
 _FALLBACK_TPM_LIMIT = 6000
 _FALLBACK_RPM_LIMIT = 30
