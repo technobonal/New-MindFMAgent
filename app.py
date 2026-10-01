@@ -24,6 +24,7 @@ import json
 
 import streamlit as st
 from langgraph.types import Command
+from rag.vectorstore import buscar_chunks_con_id, indexar_documento, calcular_anclaje
 
 from grafo import construir_grafo
 from Cliente_agemte import conectar_mcp, obtener_tools_langchain, extraer_texto_resultado
@@ -228,7 +229,12 @@ async def _subir_documento(nombre_archivo: str, contenido_bytes: bytes) -> dict:
 async def _iniciar_flujo(tema: str, thread_id: str, contenedor_timeline):
     if "rate_limiter" not in st.session_state:
         st.session_state.rate_limiter = RateLimiter()
-    grafo = await construir_grafo(st.session_state.rate_limiter)
+    grafo = await construir_grafo(
+    rate_limiter=st.session_state.rate_limiter,
+    buscar_chunks=buscar_chunks_con_id,
+    indexar_documento=indexar_documento,
+    calcular_anclaje=calcular_anclaje,
+)
     config = {"configurable": {"thread_id": thread_id}}
     estado_inicial = {
         "mensajes": [],
@@ -256,7 +262,12 @@ async def _iniciar_flujo(tema: str, thread_id: str, contenedor_timeline):
 async def _resumir_flujo(resume_payload: dict, thread_id: str, contenedor_timeline):
     if "rate_limiter" not in st.session_state:
         st.session_state.rate_limiter = RateLimiter()
-    grafo = await construir_grafo(st.session_state.rate_limiter)
+    grafo = await construir_grafo(
+    rate_limiter=st.session_state.rate_limiter,
+    buscar_chunks=buscar_chunks_con_id,
+    indexar_documento=indexar_documento,
+    calcular_anclaje=calcular_anclaje,
+)
     config = {"configurable": {"thread_id": thread_id}}
 
     async for chunk in grafo.astream(Command(resume=resume_payload), config=config, stream_mode="updates"):
