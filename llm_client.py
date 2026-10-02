@@ -113,19 +113,29 @@ def get_llm(
     modelo_sugerido = rate_limiter.siguiente_modelo_disponible(GROQ_MODEL_CHAIN, tokens_estimados)
 
     if modelo_sugerido is None:
-        logger.warning(
-            f"[llm_client] Los {len(GROQ_MODEL_CHAIN)} modelos de la cadena están sin cupo -> "
-            "se intenta igual con el primero (Groq puede rechazar con 429)."
+        # Ningún modelo tiene cupo (TPM / RPM / TPD)
+        estado = rate_limiter.estado_modelos()
+        logger.error(
+            "[llm_client] Todos los modelos de la cadena están sin cupo. "
+            "tokens_estimados=%s | estado=%s",
+            tokens_estimados,
+            estado,
         )
-        orden = GROQ_MODEL_CHAIN
-    else:
-        candidatos = [modelo_sugerido] + [m for m in GROQ_MODEL_CHAIN if m != modelo_sugerido]
-        orden = rate_limiter.filtrar_modelos_viables(candidatos, tokens_estimados)
-        if not orden:
-            raise LLMClientError(
-                f"El pedido ({tokens_estimados} tokens) supera el límite absoluto de "
-                "TODOS los modelos de la cadena de Groq."
-            )
+        raise LLMClientError(
+            f"Todos los modelos de Groq están sin cupo (TPM/RPM/TPD). "
+            f"Pedido actual: {tokens_estimados} tokens. "
+            f"Esperá a que se resetee la cuota diaria o subí de plan. "
+            f"Estado actual: {estado}"
+        )
+
+    candidatos = [modelo_sugerido] + [m for m in GROQ_MODEL_CHAIN if m != modelo_sugerido]
+    orden = rate_limiter.filtrar_modelos_viables(candidatos, tokens_estimados)
+
+    if not orden:
+        raise LLMClientError(
+            f"El pedido ({tokens_estimados} tokens) supera el límite absoluto de "
+            "TODOS los modelos de la cadena de Groq."
+        )
 
     principal = _build_chat_model(orden[0], rate_limiter, tokens_estimados, temperature, max_tokens)
     respaldos = [
