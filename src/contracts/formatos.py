@@ -5,7 +5,7 @@ Resuelve la ambigüedad A-08, que era el vacío más grande del documento fuente
 se exigen 5 formatos pedagógicos (p.2) y sólo se documenta la estructura de uno
 (Flashcards, p.5).
 
-  · ItemFlashcard    — 🟢 documentado en la fuente (p.5). NO se modifica.
+  · ItemFlashcard    — 🟢 documentado en la fuente (p.5). Extendido con imagen_descripcion e icono_busqueda opcionales (piloto).
   · ItemPasoTutorial — 🟡 definido por el equipo
   · ItemPuntoResumen — 🟡 definido por el equipo
   · ItemPreguntaQuiz — 🟡 definido por el equipo
@@ -54,11 +54,34 @@ class ItemBase(BaseModel):
 # =============================================================================
 
 
+
+ICONOS_FLASHCARD: tuple[str, ...] = (
+    "users", "user", "calendar", "clock", "timer", "hourglass", "target", "flag",
+    "list-checks", "clipboard-list", "refresh-cw", "repeat", "workflow", "git-branch",
+    "message-square", "megaphone", "handshake", "eye", "search", "lightbulb", "puzzle",
+    "layers", "rocket", "trending-up", "gauge", "settings", "wrench", "file-text",
+    "book-open", "server", "database", "cloud", "network", "cpu", "code", "shield",
+    "lock", "key", "globe",
+)
 class ItemFlashcard(ItemBase):
     frente: TextoNoVacio = Field(description="La pregunta o concepto, en el frente.")
     dorso: TextoNoVacio = Field(description="La respuesta o explicacion, en el dorso.")
     pista_didactica: TextoNoVacio = Field(
         description="Analogia o ayuda de memoria que facilita la retencion."
+    )
+    imagen_descripcion: str | None = Field(
+        default=None,
+        description=(
+            "Opcional. UNA linea, en idioma_salida, que describe la imagen o "
+            "diagrama que ayudaria a memorizar este concepto. null si no aporta. Sin URLs."
+        ),
+    )
+    icono_busqueda: str | None = Field(
+        default=None,
+        description=(
+            "Opcional. Nombre exacto de un icono de la lista permitida, "
+            "o null si ninguno representa bien el concepto."
+        ),
     )
 
 
@@ -95,13 +118,21 @@ class ItemPuntoResumen(ItemBase):
     Criterio de diseño: el destinatario natural es `Gestor Ejecutivo`. Un
     resumen que sólo comprime el texto técnico no le sirve. Los tres campos
     obligan a la cadena  hecho -> consecuencia -> valor,  que es como decide
-    ese perfil.
+    ese perfil. `recomendacion` cierra con una acción concreta cuando la
+    evidencia lo permite.
     """
 
     punto_clave: TextoNoVacio = Field(description="El hecho tecnico, en una frase.")
     implicacion: TextoNoVacio = Field(description="Que significa en la practica.")
     relevancia_negocio: TextoNoVacio = Field(
         description="Por que le importa a quien decide presupuesto."
+    )
+    recomendacion: str | None = Field(
+        default=None,
+        description=(
+            "Accion concreta anclada a la evidencia. "
+            "Omitir solo si el chunk no soporta una recomendacion."
+        ),
     )
 
 
@@ -210,3 +241,4 @@ def validar_pasos_consecutivos(items: list[ItemPasoTutorial]) -> None:
         raise ValueError(
             f"Los pasos del tutorial deben ser consecutivos desde 1. Se recibio: {numeros}"
         )
+

@@ -19,6 +19,11 @@ Si el cambio NO se puede aplicar (evidencia insuficiente, salida inválida tras
 Además, en la 1ra ejecución busca chunks NUEVOS relacionados con la instrucción
 (umbral del Investigador), porque el usuario puede pedir algo que los chunks
 originales no cubren ("agregá una flashcard sobre X").
+
+La "versión actual" que ve el modelo incluye los metadatos que el core exige en
+la salida (tiempo_estimado_estudio_minutos, conceptos_clave, prerrequisitos).
+Sin ellos el modelo no tiene de dónde sacarlos (no son hechos de los chunks) y
+se abstiene por "evidencia insuficiente".
 """
 
 from __future__ import annotations
@@ -57,12 +62,32 @@ MENSAJE_SIN_EVIDENCIA = (
     "Probá con otra instrucción."
 )
 
+# Metadatos del material que el core exige en la salida y que NO salen de los chunks.
+CAMPOS_METADATOS_A_CONSERVAR = (
+    "tiempo_estimado_estudio_minutos",
+    "conceptos_clave",
+    "prerrequisitos",
+)
+
 INDICACION = (
     "El usuario pidió MODIFICAR el material ya generado. Devolvé el paquete COMPLETO "
     "aplicando únicamente este cambio: conservá el resto salvo que la instrucción lo afecte, "
     "mantené el mismo formato y usá solo hechos de los chunks (cada item con anclaje a IDs "
-    "de chunks existentes). Si la instrucción pide algo que los chunks no respaldan, abstenete."
+    "de chunks existentes). Si la instrucción pide algo que los chunks no respaldan, abstenete. "
+    "La versión actual incluye tiempo_estimado_estudio_minutos, conceptos_clave y prerrequisitos: "
+    "son metadatos del material, no hechos de la fuente. Conservalos tal cual (ajustalos solo "
+    "si el cambio los afecta) y NO te abstengas por ellos."
 )
+
+
+def _version_actual(state: AgentState) -> dict:
+    """contenido_adaptado + los metadatos que el core exige en la salida."""
+    version = dict(state.get("contenido_adaptado") or {})
+    metadatos = state.get("metadatos") or {}
+    for campo in CAMPOS_METADATOS_A_CONSERVAR:
+        if metadatos.get(campo) is not None:
+            version[campo] = metadatos[campo]
+    return version
 
 
 def construir_nodo_modificador(rate_limiter: RateLimiter, buscar_chunks):
@@ -118,7 +143,7 @@ def construir_nodo_modificador(rate_limiter: RateLimiter, buscar_chunks):
         feedback = {
             "tipo": "MODIFICACION_SOLICITADA_POR_EL_USUARIO",
             "instruccion_del_usuario": instruccion,
-            "version_actual": state.get("contenido_adaptado") or {},
+            "version_actual": _version_actual(state),
             "indicacion": INDICACION,
         }
         if intentos_previos > 0 and state.get("feedback_redactor"):

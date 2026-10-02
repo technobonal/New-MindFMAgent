@@ -65,6 +65,7 @@ from agent_state import AgentState
 from agentes.agente_critico_revisor import CalcularAnclaje, construir_nodo_revisor
 from agentes.agente_investigador import construir_nodo_investigador
 from agentes.agente_modificador import construir_nodo_modificador, enrutar_tras_modificador
+from agentes.agente_ilustrador import nodo_ilustrador
 from agentes.agente_redactor_pedagogico import construir_nodo_redactor, enrutar_tras_redactor
 from agentes.supervisor import construir_nodo_supervisor
 from Cliente_agemte import conectar_mcp, con_reintento_mcp, extraer_texto_resultado, extraer_lista_resultado, obtener_tools_langchain
@@ -160,6 +161,7 @@ RESET_PEDIDO = {
     "status": None,
     "error": None,
     "almacenamiento_oci": None,
+    "imagenes_items": {},
 }
 
 
@@ -503,7 +505,7 @@ async def construir_grafo(
         "modificador",
         construir_nodo_modificador(rate_limiter, buscar_chunks),
     )
-
+    builder.add_node("ilustrador", nodo_ilustrador)
     builder.set_entry_point("buscador_documentos")
 
     builder.add_edge("buscador_documentos", "confirmar_ejecucion")
@@ -531,11 +533,12 @@ async def construir_grafo(
     builder.add_conditional_edges(
         "critico_revisor", enrutar_tras_revisor,
         {
-            "guardado_final": "guardado_final",
+            "guardado_final": "ilustrador",
             "redactor_pedagogico": "redactor_pedagogico",
             "modificador": "modificador",
         },
     )
+    builder.add_edge("ilustrador", "guardado_final")
     builder.add_conditional_edges(
         "modificador", enrutar_tras_modificador,
         {"revisar": "critico_revisor", "sin_cambio": "confirmar_modificacion", "guardar": "guardado_final"},

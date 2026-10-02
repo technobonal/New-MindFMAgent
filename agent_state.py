@@ -94,3 +94,5 @@ class AgentState(TypedDict):
     # --- Estado general del pipeline ---
     status: str  # "exito" | "exito_con_advertencias" | "error"
     error: Optional[str]
+
+    imagenes_items: Optional[dict[str, str]]  # {"1": url, ...} (claves str: serializan bien en el checkpoint)
