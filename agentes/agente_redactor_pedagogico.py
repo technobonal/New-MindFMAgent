@@ -23,6 +23,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+
 from pathlib import PurePosixPath
 
 from pydantic import BaseModel, ValidationError
@@ -46,15 +48,82 @@ from src.agentes.agente_redactor_pedagogico import EstadoRedactor, redactar_peda
 
 log = logging.getLogger(__name__)
 
-TEMPERATURA_REDACTOR = 0.1  # generación estructurada: conviene estable
-# get_llm usa max_tokens=1024 por defecto: corta el JSON de un paquete completo.
-# Ajustar según el TPM real de la cuenta de Groq.
+TEMPERATURA_REDACTOR = 0.1
 MAX_TOKENS_REDACTOR = 4096
 MAX_CHARS_FEEDBACK = 1500
 MENSAJE_EVIDENCIA_INSUFICIENTE = (
-    "No hay evidencia suficiente en el documento para generar este contenido. "
-    "Proba con otro tema o con otro documento."
+    "El documento no tiene evidencia suficiente para generar este contenido en este formato. "
+    "Proba con otro formato (Resumen Ejecutivo, Flashcards o Quiz), otro tema u otro documento."
 )
+
+# ← ACÁ: mapas + _canon
+PERFIL_MAP = {
+    "principiante": "Principiante",
+    "principiante/transición de carrera": "Principiante",
+    "principiante/transicion de carrera": "Principiante",
+    "desarrollador": "Desarrollador",
+    "desarrollador junior/semi senior": "Desarrollador",
+    "desarrollador junior": "Desarrollador",
+    "lider tecnico": "Lider Tecnico",
+    "líder técnico": "Lider Tecnico",
+    "lider técnico": "Lider Tecnico",
+    "líder técnico/arquitecto": "Lider Tecnico",
+    "lider tecnico/arquitecto": "Lider Tecnico",
+    "gestor ejecutivo": "Gestor Ejecutivo",
+    "gestor/ejecutivo no técnico": "Gestor Ejecutivo",
+    "gestor/ejecutivo no tecnico": "Gestor Ejecutivo",
+}
+
+FORMATO_MAP = {
+    "flashcards": "Flashcards",
+    "tutorial": "Tutorial",
+    "guía práctica paso a paso": "Tutorial",
+    "guia practica paso a paso": "Tutorial",
+    "quiz": "Quiz",
+    "quiz interactivo con justificaciones": "Quiz",
+    "resumen ejecutivo": "Resumen Ejecutivo",
+    "resumen ejecutivo (tl;dr)": "Resumen Ejecutivo",
+    "guion de clase": "Guion de Clase",
+    "guión de clase": "Guion de Clase",
+    "guion de clase/video": "Guion de Clase",
+    "guión de clase/video": "Guion de Clase",
+}
+
+NICHO_MAP = {
+    "fintech": "Fintech",
+    "salud": "Salud",
+    "e-commerce": "E-commerce",
+    "ecommerce": "E-commerce",
+    "general": "General",
+}
+
+def _canon(valor: str | None, tabla: dict[str, str], default: str) -> str:
+    if not valor or not str(valor).strip():
+        return default
+    key = str(valor).strip().lower()
+    return tabla.get(key, default)
+
+
+def _detectar_idioma(*textos: str | None) -> str:
+    """Heurística liviana. Prioriza el tema del usuario si está presente."""
+    
+    muestra = " ".join(t for t in textos if t).strip().lower()
+    if not muestra:
+        return "es"
+    # Español
+    if re.search(r"[áéíóúñ¿¡]", muestra) or any(
+        w in f" {muestra} " for w in (" qué ", " cómo ", " para ", " sobre ", " del ", " una ", " los ")
+    ):
+        return "es"
+    # Portugués
+    if re.search(r"[ãõç]", muestra) or "ção" in muestra or "ões" in muestra:
+        return "pt"
+    # Inglés
+    if any(
+        w in f" {muestra} " for w in (" the ", " and ", " of ", " for ", " with ", " what ", " how ")
+    ):
+        return "en"
+    return "es"
 
 
 # --------------------------------------------------------------------------
@@ -74,6 +143,7 @@ class GeneradorGroq:
 
     async def generate(self, *, prompt: str, output_model: type[BaseModel]):
         mensajes = [{"role": "user", "content": prompt}]
+
         # get_llm puede bloquear (rate limiter): fuera del event loop.
         llm = await asyncio.to_thread(
             get_llm,
@@ -82,22 +152,49 @@ class GeneradorGroq:
             temperature=self._temperature,
             max_tokens=self._max_tokens,
         )
-        resultado = await llm.with_structured_output(output_model, include_raw=True).ainvoke(mensajes)
+
+        try:
+            resultado = await llm.with_structured_output(
+                output_model, include_raw=True
+            ).ainvoke(mensajes)
+        except Exception as e:
+            log.error(
+                "GeneradorGroq: excepción en ainvoke: %s | tipo=%s",
+                str(e),
+                type(e).__name__,
+                exc_info=True,
+            )
+            raise  # sube al core y se convierte en ErrorLLM
 
         if resultado.get("parsed") is not None:
             return resultado["parsed"]
 
-        # El LLM respondió pero el parseo falló (JSON truncado, enum inválido...).
-        # El core envuelve CUALQUIER excepción del generador en ErrorLLM (terminal);
-        # para que esto entre al loop de reintentos como ErrorSalidaInvalida, se
-        # devuelve lo que el modelo produjo y el core lo valida con mensaje preciso.
-        log.info("Redactor: parseo estructurado falló: %s", resultado.get("parsing_error"))
-        crudo = getattr(resultado.get("raw"), "content", "") or ""
+        # Structured output falló → logueamos el raw completo para diagnosticar
+        parsing_error = resultado.get("parsing_error")
+        raw_msg = resultado.get("raw")
+        crudo = getattr(raw_msg, "content", None) or str(raw_msg) or ""
+
+        log.warning(
+            "Redactor: parseo estructurado falló.\n"
+            "parsing_error: %s\n"
+            "raw content (primeros 2000 chars):\n%s",
+            parsing_error,
+            crudo[:2000],
+        )
+
+        # Intentamos recuperar algo usable
         try:
-            intento = json.loads(crudo)
-        except (TypeError, ValueError):
-            return {}
-        return intento if isinstance(intento, dict) else {}
+            intento = json.loads(crudo) if isinstance(crudo, str) else crudo
+            if isinstance(intento, dict):
+                return intento
+        except Exception:
+            pass
+
+        # Si no se pudo recuperar nada, lanzamos excepción clara
+        raise ValueError(
+            f"Structured output falló y no se pudo recuperar JSON válido. "
+            f"parsing_error={parsing_error}"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -131,29 +228,45 @@ def _construir_solicitud(state: AgentState) -> SolicitudAdaptacion:
     chunks = state.get("chunks_fuente_confirmados") or []
     datos = {
         "documento_titulo": _titulo_documento(state.get("objeto_id_confirmado")),
-        # El contrato exige el texto, pero en este flujo vive en Chroma: se usan
-        # los chunks confirmados, que son la fuente que el Redactor realmente ve.
-        "documento_contenido": "\n\n".join(c["texto"] for c in chunks),
-        "perfil_destinatario": state.get("perfil_destinatario"),
-        "formato_salida": state.get("formato_salida"),
+        "documento_contenido": "\n\n".join(
+            (c.get("texto") or "") for c in chunks if isinstance(c, dict)
+        ),
+        # Defaults de producto si el Supervisor no los fijó / vinieron raros
+        "perfil_destinatario": _canon(
+            state.get("perfil_destinatario"), PERFIL_MAP, "Desarrollador"
+        ),
+        # Sin default: un formato ausente o irreconocible falla la validación del
+        # contrato (PARAMETRO_INVALIDO) en vez de generar un Tutorial no pedido.
+        "formato_salida": _canon(
+            state.get("formato_salida"), FORMATO_MAP, ""
+        ),
     }
-    nicho = _opcional_valido(NichoSector, state.get("nicho_sector"))
-    nivel = _opcional_valido(NivelDetalle, state.get("nivel_detalle"))
-    if nicho:
-        datos["nicho_sector"] = nicho
-    if nivel:
-        datos["nivel_detalle"] = nivel
+    nicho = _canon(state.get("nicho_sector"), NICHO_MAP, "General")
+    # nicho/nivel opcionales en el contrato: solo si el enum los acepta
+    nicho_ok = _opcional_valido(NichoSector, nicho)
+    nivel_ok = _opcional_valido(NivelDetalle, state.get("nivel_detalle"))
+    if nicho_ok:
+        datos["nicho_sector"] = nicho_ok
+    if nivel_ok:
+        datos["nivel_detalle"] = nivel_ok
     return SolicitudAdaptacion.model_validate(datos)
 
 
-def construir_salida_estado(solicitud, contenido) -> dict:
+def construir_salida_estado(solicitud, contenido, idioma_salida: str = "es") -> dict:
     """ContenidoRedactor (core) -> campos del state. Lo reusa el Modificador."""
+    adaptado = {
+        "titulo": contenido.titulo,
+        "introduccion_contextualizada": contenido.introduccion_contextualizada,
+        "items": [item.model_dump(mode="json") for item in contenido.items],
+    }
+    # Campos nuevos del estándar ejecutivo (si el modelo los expone)
+    if getattr(contenido, "mensaje_principal", None):
+        adaptado["mensaje_principal"] = contenido.mensaje_principal
+    if getattr(contenido, "recomendaciones_prioritarias", None):
+        adaptado["recomendaciones_prioritarias"] = list(contenido.recomendaciones_prioritarias or [])
+
     return {
-        "contenido_adaptado": {
-            "titulo": contenido.titulo,
-            "introduccion_contextualizada": contenido.introduccion_contextualizada,
-            "items": [item.model_dump(mode="json") for item in contenido.items],
-        },
+        "contenido_adaptado": adaptado,
         "metadatos": {
             "perfil_aplicado": solicitud.perfil_destinatario.value,
             "formato_generado": solicitud.formato_salida.value,
@@ -162,6 +275,7 @@ def construir_salida_estado(solicitud, contenido) -> dict:
             "nicho_aplicado": solicitud.nicho_sector.value,
             "nivel_detalle_aplicado": solicitud.nivel_detalle.value,
             "prerrequisitos": contenido.prerrequisitos,
+            "idioma": idioma_salida,
         },
     }
 
@@ -198,6 +312,12 @@ def construir_nodo_redactor(rate_limiter: RateLimiter, max_intentos: int):
             for c in (state.get("chunks_fuente_confirmados") or [])
         ]
 
+        # ─── NUEVO: detectar idioma de salida ───────────────────────────
+        tema = state.get("tema_pedido_chat") or state.get("tema_consulta") or ""
+        textos_chunks = [(c.get("texto") or "")[:400] for c in chunks]
+        idioma_salida = _detectar_idioma(tema, *textos_chunks[:3])
+        # ────────────────────────────────────────────────────────────────
+
         try:
             resultado = await redactar_pedagogicamente(
                 solicitud=solicitud,
@@ -205,14 +325,16 @@ def construir_nodo_redactor(rate_limiter: RateLimiter, max_intentos: int):
                 especificacion_pedagogica=obtener_especificacion(solicitud.perfil_destinatario),
                 generador=generador,
                 feedback_revisor=state.get("feedback_redactor"),
+                # ─── NUEVO: pasar idioma y tema al core ─────────────────
+                idioma_salida=idioma_salida,
+                tema_usuario=tema,
+                # ────────────────────────────────────────────────────────
             )
         except ErrorFormatoNoDisponible as exc:
             return _error(exc.mensaje_usuario, exc.mensaje_tecnico)
         except ErrorSalidaInvalida as exc:
             if intentos >= max_intentos:
                 return _error(exc.mensaje_usuario, f"intentos agotados ({intentos}): {exc.mensaje_tecnico}")
-            # Reentra al loop: el detalle técnico viaja como feedback al LLM
-            # (nunca a pantalla) en el próximo intento.
             log.info("Redactor: salida inválida en intento %s: %s", intentos, exc.mensaje_tecnico)
             return {
                 "contenido_adaptado": {},
@@ -226,8 +348,10 @@ def construir_nodo_redactor(rate_limiter: RateLimiter, max_intentos: int):
             return _error(MENSAJE_EVIDENCIA_INSUFICIENTE, resultado.motivo_abstencion or "")
 
         return {
-            **construir_salida_estado(solicitud, resultado.contenido),
-            "feedback_redactor": None,  # ya consumido
+            # ─── NUEVO: idioma en metadatos ─────────────────────────────
+            **construir_salida_estado(solicitud, resultado.contenido, idioma_salida=idioma_salida),
+            # ────────────────────────────────────────────────────────────
+            "feedback_redactor": None,
             "intentos_redactor": intentos,
         }
 

@@ -52,6 +52,9 @@ class ContenidoRedactor(BaseModel):
     conceptos_clave: list[TextoNoVacio] = Field(min_length=1)
     prerrequisitos: list[str] = Field(default_factory=list)
     items: list[ItemPaquete] = Field(min_length=1)
+    # Estándar ejecutivo (BLUF). Opcionales para no romper otros formatos.
+    mensaje_principal: str | None = None
+    recomendaciones_prioritarias: list[str] = Field(default_factory=list)
 
 
 class RespuestaGenerador(BaseModel):
@@ -142,6 +145,8 @@ async def redactar_pedagogicamente(
     especificacion_pedagogica: Any,
     generador: GeneradorEstructurado,
     feedback_revisor: Any | None = None,
+    idioma_salida: str | None = None,
+    tema_usuario: str | None = None,
 ) -> ResultadoRedactor:
     """Genera contenido respaldado y valida formato e integridad de anchors."""
     if not isinstance(solicitud, SolicitudAdaptacion):
@@ -161,7 +166,12 @@ async def redactar_pedagogicamente(
         )
     try:
         prompt = construir_prompt_redactor(
-            solicitud, fuentes, especificacion_pedagogica, feedback_revisor
+            solicitud,
+            fuentes,
+            especificacion_pedagogica,
+            feedback_revisor,
+            idioma_salida=idioma_salida,
+            tema_usuario=tema_usuario,
         )
     except (TypeError, ValueError) as exc:
         raise ErrorSalidaInvalida(f"No se pudo construir el prompt: {exc}") from exc
