@@ -13,6 +13,24 @@ Cadena: openai/gpt-oss-120b -> openai/gpt-oss-20b -> qwen/qwen3.8-27b
 al ser agnóstica de frontend/flujo). Nota: el tercer modelo es
 qwen/qwen3.8-27b, no qwen3.6-27b -- verificado contra los límites reales
 habilitados en la cuenta de Groq (console.groq.com/settings/limits).
+
+CLIENTE HTTP Y EVENT LOOP
+-------------------------
+Si no se le pasa un cliente, langchain_openai reutiliza un httpx.AsyncClient
+por defecto que queda cacheado entre instancias. Cuando la app corre varios
+asyncio.run(...) (Streamlit + MCP), ese cliente conserva conexiones atadas a un
+loop ya cerrado y falla con "RuntimeError: Event loop is closed" al intentar
+limpiarlas.
+
+Para evitarlo, `get_llm` acepta un `http_async_client` opcional. Quien llama
+desde una corutina crea el cliente con `crear_http_async_client()` dentro de
+`async with`, de modo que nace y muere en el loop activo:
+
+    async with crear_http_async_client() as http_client:
+        llm = get_llm(mensajes, rate_limiter, http_async_client=http_client)
+        resultado = await llm.ainvoke(mensajes)
+
+El parámetro es opcional: los agentes que no lo pasan siguen funcionando igual.
 """
 
 from __future__ import annotations
@@ -21,6 +39,7 @@ import logging
 import os
 from typing import Any
 
+import httpx
 from dotenv import load_dotenv
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
@@ -39,9 +58,25 @@ GROQ_MODEL_CHAIN = [
     m.strip() for m in os.getenv("GROQ_MODEL_CHAIN", _DEFAULT_CHAIN).split(",") if m.strip()
 ]
 
+#: Timeout total de una llamada a Groq (segundos) y de la conexión inicial.
+HTTP_TIMEOUT_SEGUNDOS = 90.0
+HTTP_CONNECT_TIMEOUT_SEGUNDOS = 15.0
+
 
 class LLMClientError(Exception):
     """Falta GROQ_API_KEY, o toda la cadena de fallback falló."""
+
+
+def crear_http_async_client(timeout: float = HTTP_TIMEOUT_SEGUNDOS) -> httpx.AsyncClient:
+    """
+    Cliente httpx propio para UNA ejecución async.
+
+    Usalo siempre con `async with` desde la corutina que hace la llamada, para
+    que el pool de conexiones se cree y se cierre en el mismo event loop.
+    """
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout, connect=HTTP_CONNECT_TIMEOUT_SEGUNDOS)
+    )
 
 
 class _RegistroRateLimiterCallback(BaseCallbackHandler):
@@ -71,9 +106,22 @@ class _RegistroRateLimiterCallback(BaseCallbackHandler):
         logger.info(f"[llm_client] Respondió groq/{self.modelo} ({tokens_reales} tokens)")
 
 
-def _build_chat_model(modelo: str, rate_limiter: RateLimiter, tokens_estimados: int,
-                       temperature: float, max_tokens: int) -> ChatOpenAI:
+def _build_chat_model(
+    modelo: str,
+    rate_limiter: RateLimiter,
+    tokens_estimados: int,
+    temperature: float,
+    max_tokens: int,
+    http_async_client: httpx.AsyncClient | None = None,
+) -> ChatOpenAI:
     callback = _RegistroRateLimiterCallback(modelo, rate_limiter, tokens_estimados)
+
+    extra: dict[str, Any] = {}
+    if http_async_client is not None:
+        extra["http_async_client"] = http_async_client
+    if modelo.startswith("openai/gpt-oss"):
+        extra["model_kwargs"] = {"reasoning_effort": "low"}
+
     return ChatOpenAI(
         model=modelo,
         base_url=GROQ_BASE_URL,
@@ -81,6 +129,7 @@ def _build_chat_model(modelo: str, rate_limiter: RateLimiter, tokens_estimados: 
         temperature=temperature,
         max_tokens=max_tokens,
         callbacks=[callback],
+        **extra,
     )
 
 
@@ -90,6 +139,7 @@ def get_llm(
     tools: list[dict[str, Any]] | None = None,
     temperature: float = 0.2,
     max_tokens: int = 1024,
+    http_async_client: httpx.AsyncClient | None = None,
 ) -> ChatOpenAI:
     """
     Devuelve un ChatOpenAI con .with_fallbacks() ya armado, reordenado
@@ -97,6 +147,10 @@ def get_llm(
     se llama una vez por turno de cada agente, no una sola vez al
     importar el módulo, para que la cascada refleje el cupo real de
     cada llamada.
+
+    `http_async_client` (opcional): cliente httpx creado en el event loop
+    activo (ver crear_http_async_client). Se comparte entre todos los modelos
+    de la cadena. Si es None, se usa el cliente por defecto de langchain_openai.
 
     Uso típico en un agente de NuevaMente:
         llm = get_llm(mensajes_del_turno, rate_limiter)
@@ -137,9 +191,13 @@ def get_llm(
             "TODOS los modelos de la cadena de Groq."
         )
 
-    principal = _build_chat_model(orden[0], rate_limiter, tokens_estimados, temperature, max_tokens)
+    principal = _build_chat_model(
+        orden[0], rate_limiter, tokens_estimados, temperature, max_tokens, http_async_client
+    )
     respaldos = [
-        _build_chat_model(m, rate_limiter, tokens_estimados, temperature, max_tokens)
+        _build_chat_model(
+            m, rate_limiter, tokens_estimados, temperature, max_tokens, http_async_client
+        )
         for m in orden[1:]
     ]
 
