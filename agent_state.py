@@ -5,6 +5,9 @@ Estado compartido del grafo de NuevaMente. Adaptado del patrón de
 agent_state.py de MCPMULTIAgentsResearch (mismo uso de reducers:
 add_messages para mensajes de chat reales, operator.add para listas
 de acumulación que no son mensajes).
+
+Los campos marcados con "AGREGADO" ya los usaban grafo.py y los agentes pero no
+estaban declarados acá. LangGraph solo guarda las claves declaradas en el estado.
 """
 
 from __future__ import annotations
@@ -58,13 +61,19 @@ class AgentState(TypedDict):
 
     input_sanitizado: Optional[str]
 
+    # AGREGADO: lo devuelve el nodo de ingesta ({"estado": "ingesta_completada"})
+    estado: Optional[str]
+
     # --- Buscador de Documentos (5to spec) ---
     tema_pedido_chat: Optional[str]
     candidatos_documento: list[str]
     objeto_id_confirmado: Optional[str]
     ejecucion_confirmada: bool
 
-    # --- Supervisor (IntencionOut, sección 10) ---
+    # --- Parámetros de personalización ---
+    # Los resuelve el nodo "parametros" (paso a paso) y se confirman antes de
+    # ejecutar. Siempre en forma canónica del contrato (contracts/enums.py).
+    # nicho_sector y nivel_detalle arrancan en None = default (General / Estandar).
     tema_consulta: Optional[str]  # tema a verificar dentro del documento (Investigador)
     perfil_destinatario: Optional[str]
     formato_salida: Optional[str]
@@ -82,17 +91,20 @@ class AgentState(TypedDict):
     metadatos: Optional[Metadatos]
     evaluacion_calidad: Optional[EvaluacionCalidad]
     aprobado: Optional[bool]
-    intentos_redactor: int  # contador para el tope de 2 reintentos
+    intentos_redactor: int  # contador para el tope de reintentos
+    feedback_redactor: Optional[str]  # AGREGADO: feedback del Revisor / error de validación
 
     # --- Agente Modificador ---
     instruccion_modificacion: Optional[str]  # lo que pide el usuario para cambiar
     vueltas_modificacion: int  # contador para el tope de 5 vueltas por sesión
+    intentos_modificador: int  # AGREGADO: correcciones del Modificador por instrucción
+    aviso_modificacion: Optional[str]  # AGREGADO: p. ej. "no se pudo aplicar ese cambio"
 
     # --- Guardado ---
     almacenamiento_oci: Optional[AlmacenamientoOCI]
 
     # --- Estado general del pipeline ---
-    status: str  # "exito" | "exito_con_advertencias" | "error"
+    status: str  # "exito" | "exito_con_advertencias" | "error" | "cancelado"
     error: Optional[str]
 
     imagenes_items: Optional[dict[str, str]]  # {"1": url, ...} (claves str: serializan bien en el checkpoint)

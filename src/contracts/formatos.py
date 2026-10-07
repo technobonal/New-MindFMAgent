@@ -63,6 +63,8 @@ ICONOS_FLASHCARD: tuple[str, ...] = (
     "book-open", "server", "database", "cloud", "network", "cpu", "code", "shield",
     "lock", "key", "globe",
 )
+
+
 class ItemFlashcard(ItemBase):
     frente: TextoNoVacio = Field(description="La pregunta o concepto, en el frente.")
     dorso: TextoNoVacio = Field(description="La respuesta o explicacion, en el dorso.")
