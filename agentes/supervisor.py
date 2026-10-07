@@ -1,16 +1,19 @@
 """
 agentes/supervisor.py
 
-Clasifica la intención del usuario (IntencionOut): tema, perfil del
-destinatario, formato pedagógico, nicho/sector y nivel de detalle.
-No genera contenido educativo, no evalúa si el tema existe en el
-documento (eso lo hace el Investigador) -- prompt cerrado en la
-sección 10 del spec.
+Extrae el tema de la consulta del usuario (IntencionOut). No genera contenido
+educativo ni evalúa si el tema existe en el documento (eso lo hace el
+Investigador) -- prompt cerrado en la sección 10 del spec.
+
+Los parámetros de personalización (perfil, formato, nicho, nivel_detalle) YA NO
+se infieren acá: los resuelve el nodo "parametros" (agentes/parametros.py), paso
+a paso, y el usuario los confirma antes de ejecutar. Si este nodo los devolviera,
+pisaría esa elección.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+import logging
 
 from pydantic import BaseModel, Field
 
@@ -18,111 +21,22 @@ from agent_state import AgentState
 from llm_client import get_llm
 from seguridad.rate_limiter import RateLimiter
 
-# Valores canónicos = los que valida el Redactor (una sola fuente de verdad).
-PerfilDestinatario = Literal[
-    "Principiante",
-    "Desarrollador",
-    "Lider Tecnico",
-    "Gestor Ejecutivo",
-]
-FormatoSalida = Literal[
-    "Flashcards",
-    "Tutorial",
-    "Quiz",
-    "Resumen Ejecutivo",
-    "Guion de Clase",
-]
-NichoSector = Literal["Fintech", "Salud", "E-commerce", "General"]
-
-# Aliases que el LLM o el spec largo pueden devolver → valor canónico.
-PERFIL_MAP = {
-    "principiante": "Principiante",
-    "principiante/transición de carrera": "Principiante",
-    "principiante/transicion de carrera": "Principiante",
-    "desarrollador": "Desarrollador",
-    "desarrollador junior/semi senior": "Desarrollador",
-    "desarrollador junior": "Desarrollador",
-    "lider tecnico": "Lider Tecnico",
-    "líder técnico": "Lider Tecnico",
-    "lider técnico": "Lider Tecnico",
-    "líder técnico/arquitecto": "Lider Tecnico",
-    "lider tecnico/arquitecto": "Lider Tecnico",
-    "gestor ejecutivo": "Gestor Ejecutivo",
-    "gestor/ejecutivo no técnico": "Gestor Ejecutivo",
-    "gestor/ejecutivo no tecnico": "Gestor Ejecutivo",
-}
-
-FORMATO_MAP = {
-    "flashcards": "Flashcards",
-    "tutorial": "Tutorial",
-    "guía práctica paso a paso": "Tutorial",
-    "guia practica paso a paso": "Tutorial",
-    "quiz": "Quiz",
-    "quiz interactivo con justificaciones": "Quiz",
-    "resumen ejecutivo": "Resumen Ejecutivo",
-    "resumen ejecutivo (tl;dr)": "Resumen Ejecutivo",
-    "guion de clase": "Guion de Clase",
-    "guión de clase": "Guion de Clase",
-    "guion de clase/video": "Guion de Clase",
-    "guión de clase/video": "Guion de Clase",
-}
-
-NICHO_MAP = {
-    "fintech": "Fintech",
-    "salud": "Salud",
-    "e-commerce": "E-commerce",
-    "ecommerce": "E-commerce",
-    "general": "General",
-}
+log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """Sos el supervisor de un sistema que transforma documentación técnica en contenido educativo.
-Tu única tarea es clasificar la solicitud del usuario y devolver un objeto IntencionOut con:
-- tema_consulta: el tema específico que el usuario quiere aprender (extraído de su pedido)
-- perfil_destinatario: EXACTAMENTE uno de: Principiante | Desarrollador | Lider Tecnico | Gestor Ejecutivo
-- formato_salida: EXACTAMENTE uno de: Flashcards | Tutorial | Quiz | Resumen Ejecutivo | Guion de Clase
-- nicho_sector: EXACTAMENTE uno de: Fintech | Salud | E-commerce | General
-- nivel_detalle: lo que indico el usuario, o null
+Tu única tarea es extraer el tema de la solicitud del usuario y devolver un objeto IntencionOut con:
+- tema_consulta: el tema específico que el usuario quiere aprender, en pocas palabras. No incluyas el perfil del destinatario, el formato pedido, el sector ni el nivel de detalle, ni cantidades como "5 preguntas".
 No generás contenido educativo vos mismo. No evalúas si el tema existe en el documento — eso lo hace el Investigador.
-Si el usuario no indicó perfil, formato o nicho, devolvélos como null (no inventes).
-Usá los strings EXACTOS de arriba (sin tildes en "Lider Tecnico", sin variantes largas)."""
+Si la solicitud no menciona un tema concreto, devolvé la solicitud completa tal cual."""
 
 
 class IntencionOut(BaseModel):
-    tema_consulta: str | None = Field(default=None)
-    perfil_destinatario: PerfilDestinatario | None = Field(
-        default=None,
-        description="Uno de: Principiante, Desarrollador, Lider Tecnico, Gestor Ejecutivo",
+    tema_consulta: str = Field(
+        description=(
+            "Tema específico que el usuario quiere aprender, sin perfil, formato, "
+            "nicho ni nivel de detalle."
+        )
     )
-    formato_salida: FormatoSalida | None = Field(
-        default=None,
-        description="Uno de: Flashcards, Tutorial, Quiz, Resumen Ejecutivo, Guion de Clase",
-    )
-    nicho_sector: NichoSector | None = Field(
-        default=None,
-        description="Uno de: Fintech, Salud, E-commerce, General",
-    )
-    nivel_detalle: str | None = Field(default=None)
-
-
-def normalizar_perfil(v: str | None) -> str | None:
-    if v is None or not str(v).strip():
-        return None
-    key = str(v).strip().lower()
-    return PERFIL_MAP.get(key)  # si no está en el mapa, el caller pone default
-
-
-def normalizar_formato(v: str | None) -> str | None:
-    if v is None or not str(v).strip():
-        return None
-    key = str(v).strip().lower()
-    return FORMATO_MAP.get(key, "Tutorial")
-
-
-def normalizar_nicho(v: str | None) -> str | None:
-    if v is None or not str(v).strip():
-        return None
-    key = str(v).strip().lower()
-    return NICHO_MAP.get(key, "General")
 
 
 def construir_nodo_supervisor(rate_limiter: RateLimiter):
@@ -134,10 +48,6 @@ def construir_nodo_supervisor(rate_limiter: RateLimiter):
 
     def nodo_supervisor(state: AgentState) -> dict:
         pedido_usuario = state.get("tema_pedido_chat") or ""
-        # TODO: cuando exista el formulario de parámetros en app.py
-        # (perfil/formato/nicho/nivel, sección 8 del spec), el pedido
-        # completo del usuario debería armarse acá con esos 4 valores
-        # explícitos en vez de que el LLM los infiera solo del tema.
         mensajes = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": pedido_usuario},
@@ -146,28 +56,14 @@ def construir_nodo_supervisor(rate_limiter: RateLimiter):
         llm = get_llm(mensajes, rate_limiter, temperature=0.1)
         llm_estructurado = llm.with_structured_output(IntencionOut)
 
+        tema_llm: str | None = None
         try:
             intencion: IntencionOut = llm_estructurado.invoke(mensajes)
-            perfil = normalizar_perfil(intencion.perfil_destinatario)
-            formato = normalizar_formato(intencion.formato_salida)
-            nicho = normalizar_nicho(intencion.nicho_sector)
-            tema_llm = intencion.tema_consulta
-            nivel = intencion.nivel_detalle
-        except Exception:
-            # Structured output falló (enum viejo / basura del modelo):
-            # no tumbar el grafo; defaults seguros y tema del chat.
-            perfil, formato, nicho, tema_llm, nivel = None, None, None, None, None
+            tema_llm = (intencion.tema_consulta or "").strip() or None
+        except Exception as exc:
+            # Structured output falló: no tumbar el grafo; se usa el pedido del chat.
+            log.warning("Supervisor: no se pudo extraer el tema (%s); se usa el pedido tal cual.", exc)
 
-        tema_final = tema_llm or state.get("tema_pedido_chat")
-
-        return {
-            "tema_consulta": tema_final,
-            # Defaults de producto si el usuario no especificó nada:
-            # el Redactor exige valores del enum, no null.
-            "perfil_destinatario": perfil or "Desarrollador",
-            "formato_salida": formato or "Tutorial",
-            "nicho_sector": nicho or "General",
-            "nivel_detalle": nivel,
-        }
+        return {"tema_consulta": tema_llm or pedido_usuario or None}
 
     return nodo_supervisor

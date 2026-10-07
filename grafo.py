@@ -3,8 +3,10 @@ grafo.py
 
 Grafo de NuevaMente (5to spec). Flujo secuencial, no fan-out:
 
-buscador_documentos -> confirmar_ejecucion (HITL) -> ingesta -> validacion
--> supervisor -> investigador -> [confirmar_aclaracion (HITL, 1 ronda) -> investigador]
+buscador_documentos -> parametros (HITL: documento, perfil y formato, uno por vez)
+-> confirmar_ejecucion (HITL: confirma y deja editar los 4 parámetros) -> ingesta
+-> validacion -> supervisor -> investigador
+-> [confirmar_aclaracion (HITL, 1 ronda) -> investigador]
 -> redactor_pedagogico (-> reintento propio | abstención -> END) -> critico_revisor
 -> guardado_final -> confirmar_modificacion (HITL) -> [modificador -> critico_revisor
    -> guardado_final -> confirmar_modificacion]* -> END
@@ -12,8 +14,12 @@ buscador_documentos -> confirmar_ejecucion (HITL) -> ingesta -> validacion
 Nodos REALES (llaman a OCI vía Cliente_agemte.py, ya validado):
   - buscador_documentos, ingesta (descarga), guardado_final
 
+Nodos de interacción (sin LLM):
+  - parametros (agentes/parametros.py): pide documento, perfil y formato paso a paso,
+    con opciones; salta lo que el mensaje inicial ya trae.
+
 Nodos con LLM real:
-  - supervisor (agentes/supervisor.py, IntencionOut vía Groq)
+  - supervisor (agentes/supervisor.py, IntencionOut vía Groq: solo extrae el tema)
   - investigador (agentes/agente_investigador.py)
   - redactor_pedagogico (agentes/agente_redactor_pedagogico.py, core del equipo)
   - critico_revisor (agentes/agente_critico_revisor.py: anclaje por coseno + 1 llamada LLM)
@@ -67,6 +73,14 @@ from agentes.agente_investigador import construir_nodo_investigador
 from agentes.agente_modificador import construir_nodo_modificador, enrutar_tras_modificador
 from agentes.agente_ilustrador import nodo_ilustrador
 from agentes.agente_redactor_pedagogico import construir_nodo_redactor, enrutar_tras_redactor
+from agentes.parametros import (
+    PREFIJO_FUENTES,
+    enrutar_tras_parametros,
+    nodo_parametros,
+    opciones_confirmacion,
+    parametros_para_confirmacion,
+    resolver_confirmacion,
+)
 from agentes.supervisor import construir_nodo_supervisor
 from Cliente_agemte import conectar_mcp, con_reintento_mcp, extraer_texto_resultado, extraer_lista_resultado, obtener_tools_langchain
 from seguridad.rate_limiter import RateLimiter
@@ -74,7 +88,7 @@ from src.errores import MENSAJE_POR_DEFECTO, CodigoError
 
 log = logging.getLogger(__name__)
 
-PREFIJO_FUENTES = "fuentes/"
+# PREFIJO_FUENTES ("fuentes/") se define en agentes/parametros.py y se importa arriba.
 MAX_INTENTOS_REDACTOR = 3        # 1 intento inicial + 2 correcciones
 MAX_INTENTOS_MODIFICADOR = 3     # por cada instrucción de modificación del usuario
 MAX_VUELTAS_MODIFICACION = 5     # instrucciones de modificación por sesión
@@ -138,6 +152,12 @@ def _calcular_anclaje_stub(afirmaciones: list[str], user_id: str, objeto_id: str
 # Campos por-pedido que deben arrancar limpios en cada corrida: el thread_id
 # (email del usuario) persiste el estado entre pedidos en el checkpointer.
 RESET_PEDIDO = {
+    # parámetros de personalización: los vuelve a resolver el nodo "parametros"
+    "tema_consulta": None,
+    "perfil_destinatario": None,
+    "formato_salida": None,
+    "nicho_sector": None,
+    "nivel_detalle": None,
     # aclaración del Investigador
     "mensaje_aclaracion": None,
     "respuesta_aclaracion_usuario": None,
@@ -209,30 +229,56 @@ async def nodo_buscador_documentos(state: AgentState) -> dict:
 
 
 # --------------------------------------------------------------------------
+# Parámetros (HITL paso a paso): agentes/parametros.py
+# El nodo y su router (enrutar_tras_parametros) se importan arriba.
+# --------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------
 # HITL: ¿Ejecutar? (REAL -- 5to spec)
 # --------------------------------------------------------------------------
 
 def nodo_confirmar_ejecucion(state: AgentState) -> dict:
     """
     Pausa el grafo hasta que la UI resuma con Command(resume=...).
-    Se espera un dict como el de vuelta: {"confirmado": bool, "objeto_id_confirmado": str | None}
-    -- si la UI dejó elegir un candidato del selectbox, viene acá.
+
+    Muestra el documento y los 4 parámetros (nicho y nivel con sus defaults) y
+    permite editarlos antes de ejecutar. Se espera un dict como el de vuelta:
+
+        {"confirmado": bool,
+         "perfil_destinatario": str, "formato_salida": str,
+         "nicho_sector": str, "nivel_detalle": str,
+         "objeto_id_confirmado": str | None}   # este último es opcional
+
+    Lo que falte o venga inválido conserva el valor que ya había en el estado.
     """
     respuesta = interrupt({
         "tipo": "confirmar_ejecucion",
-        "candidatos_documento": state.get("candidatos_documento", []),
         "objeto_id_confirmado": state.get("objeto_id_confirmado"),
+        "parametros": parametros_para_confirmacion(state),
+        "opciones": opciones_confirmacion(),
     })
+    if not isinstance(respuesta, dict):
+        respuesta = {}
 
     objeto_id = respuesta.get("objeto_id_confirmado") or state.get("objeto_id_confirmado")
     if objeto_id and not objeto_id.startswith(PREFIJO_FUENTES):
         objeto_id = f"{PREFIJO_FUENTES}{objeto_id}"
 
-    return {
-        # Sin documento elegido no se puede ejecutar, aunque la UI mande confirmado=True.
-        "ejecucion_confirmada": bool(respuesta.get("confirmado", False)) and bool(objeto_id),
+    valores = resolver_confirmacion(state, respuesta)
+    completo = bool(valores["perfil_destinatario"]) and bool(valores["formato_salida"])
+
+    # Sin documento, perfil y formato no se puede ejecutar, aunque la UI mande confirmado=True.
+    ejecutar = bool(respuesta.get("confirmado", False)) and bool(objeto_id) and completo
+
+    salida = {
+        "ejecucion_confirmada": ejecutar,
         "objeto_id_confirmado": objeto_id,
+        **valores,
     }
+    if not ejecutar:
+        salida["status"] = "cancelado"
+    return salida
 
 
 def enrutar_tras_confirmar_ejecucion(state: AgentState) -> str:
@@ -486,6 +532,7 @@ async def construir_grafo(
     builder = StateGraph(AgentState)
 
     builder.add_node("buscador_documentos", nodo_buscador_documentos)
+    builder.add_node("parametros", nodo_parametros)
     builder.add_node("confirmar_ejecucion", nodo_confirmar_ejecucion)
     builder.add_node("ingesta", construir_nodo_ingesta(indexar_documento))
     builder.add_node("validacion", nodo_validacion)
@@ -508,7 +555,11 @@ async def construir_grafo(
     builder.add_node("ilustrador", nodo_ilustrador)
     builder.set_entry_point("buscador_documentos")
 
-    builder.add_edge("buscador_documentos", "confirmar_ejecucion")
+    builder.add_edge("buscador_documentos", "parametros")
+    builder.add_conditional_edges(
+        "parametros", enrutar_tras_parametros,
+        {"ok": "confirmar_ejecucion", "cancelado": END},
+    )
     builder.add_conditional_edges(
         "confirmar_ejecucion", enrutar_tras_confirmar_ejecucion,
         {"ingesta": "ingesta", "cancelado": END},
