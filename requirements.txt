@@ -1,4 +1,4 @@
-# --- Orquestación de agentes (versiones fijas, ya validadas en MCPMULTIAgentsResearch) ---
+# --- Orquestaci?n de agentes (versiones fijas, ya validadas en MCPMULTIAgentsResearch) ---
 langgraph==1.2.11
 langgraph-checkpoint-sqlite>=1.0.0
 langchain-core==1.6.3
@@ -21,16 +21,15 @@ tiktoken>=0.8.0
 # --- Oracle Cloud (SDK oficial, nuevo en este proyecto) ---
 oci>=2.129.0
 
-# --- Extracción de documentos ---
+# --- Extracci?n de documentos ---
 pypdf>=5.0.0
 
-# --- Exportación PDF / Markdown ---
+# --- Exportaci?n PDF / Markdown ---
 reportlab>=4.2.0
 
 # --- Interfaz ---
-streamlit>=1.38.0
 
-# --- Config / validación ---
+# --- Config / validaci?n ---
 python-dotenv==1.2.3
 pydantic==2.13.5
 
