@@ -84,9 +84,9 @@ _SEMANTICA_FORMATO: dict[str, str] = {
         "imagen_descripcion es OBLIGATORIA en TODAS las cards (el esquema admite null solo "
         "por compatibilidad con el contrato; en este producto siempre se completa): una línea "
         "descriptiva en idioma_salida que represente visualmente el concepto de la card. "
-        "icono_busqueda es opcional y debe ser EXACTAMENTE uno de estos nombres: "
+        "icono_busqueda es OBLIGATORIO en TODAS las cards y debe ser EXACTAMENTE uno de estos nombres: "
         + ", ".join(ICONOS_FLASHCARD)
-        + ". Úsalo solo si ese icono representa bien el concepto; si ninguno encaja bien, déjalo en null. "
+        + ". Elegí el que mejor represente el concepto; si ninguno encaja del todo, el más cercano. Nunca lo dejes en null. "
         "No inventes nombres fuera de la lista. Nunca incluyas URLs. Todo lo demás en idioma_salida."
     ),
     "Tutorial": (
