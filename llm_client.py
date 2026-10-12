@@ -31,6 +31,18 @@ desde una corutina crea el cliente con `crear_http_async_client()` dentro de
         resultado = await llm.ainvoke(mensajes)
 
 El parámetro es opcional: los agentes que no lo pasan siguen funcionando igual.
+
+GUARDIA DE RED
+--------------
+Antes de construir los clientes, `get_llm` valida el endpoint de Groq con
+seguridad.guardia_red.validar_endpoint_proveedor("groq", ...). Si el destino
+no cumple la política, levanta LLMClientError. Esto reduce destinos accidentales
+y SSRF por URL; no reemplaza las reglas de salida de la VCN en OCI.
+
+Los clientes creados con `crear_http_async_client()` no siguen redirecciones.
+Si `get_llm` se usa sin `http_async_client` (o con .invoke() sincrónico), el SDK
+de OpenAI crea su propio cliente y ese sí las sigue por defecto: ese caso solo
+lo cubren las reglas de salida de red de OCI.
 """
 
 from __future__ import annotations
@@ -44,6 +56,7 @@ from dotenv import load_dotenv
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
 
+from seguridad.guardia_red import ErrorGuardiaRed, validar_endpoint_proveedor
 from seguridad.rate_limiter import RateLimiter, estimar_tokens
 
 load_dotenv()
@@ -64,7 +77,7 @@ HTTP_CONNECT_TIMEOUT_SEGUNDOS = 15.0
 
 
 class LLMClientError(Exception):
-    """Falta GROQ_API_KEY, o toda la cadena de fallback falló."""
+    """Falta GROQ_API_KEY, el destino fue rechazado, o toda la cadena de fallback falló."""
 
 
 def crear_http_async_client(timeout: float = HTTP_TIMEOUT_SEGUNDOS) -> httpx.AsyncClient:
@@ -73,9 +86,12 @@ def crear_http_async_client(timeout: float = HTTP_TIMEOUT_SEGUNDOS) -> httpx.Asy
 
     Usalo siempre con `async with` desde la corutina que hace la llamada, para
     que el pool de conexiones se cree y se cierre en el mismo event loop.
+    No sigue redirecciones: un 3xx de Groq no debería ocurrir y, si ocurre,
+    no se sigue a ciegas hacia otro destino.
     """
     return httpx.AsyncClient(
-        timeout=httpx.Timeout(timeout, connect=HTTP_CONNECT_TIMEOUT_SEGUNDOS)
+        timeout=httpx.Timeout(timeout, connect=HTTP_CONNECT_TIMEOUT_SEGUNDOS),
+        follow_redirects=False,
     )
 
 
@@ -112,6 +128,7 @@ def _build_chat_model(
     tokens_estimados: int,
     temperature: float,
     max_tokens: int,
+    base_url: str,
     http_async_client: httpx.AsyncClient | None = None,
 ) -> ChatOpenAI:
     callback = _RegistroRateLimiterCallback(modelo, rate_limiter, tokens_estimados)
@@ -124,7 +141,7 @@ def _build_chat_model(
 
     return ChatOpenAI(
         model=modelo,
-        base_url=GROQ_BASE_URL,
+        base_url=base_url,
         api_key=GROQ_API_KEY,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -163,6 +180,13 @@ def get_llm(
             "https://console.groq.com/keys"
         )
 
+    # Política de red: el destino de Groq debe ser el aprobado.
+    try:
+        base_url = validar_endpoint_proveedor("groq", GROQ_BASE_URL)
+    except ErrorGuardiaRed as e:
+        logger.error("[llm_client] Destino de Groq rechazado por la guardia de red: %s", e)
+        raise LLMClientError(f"El destino de Groq fue rechazado por la política de red: {e}") from e
+
     tokens_estimados = estimar_tokens(mensajes, tools)
     modelo_sugerido = rate_limiter.siguiente_modelo_disponible(GROQ_MODEL_CHAIN, tokens_estimados)
 
@@ -192,11 +216,11 @@ def get_llm(
         )
 
     principal = _build_chat_model(
-        orden[0], rate_limiter, tokens_estimados, temperature, max_tokens, http_async_client
+        orden[0], rate_limiter, tokens_estimados, temperature, max_tokens, base_url, http_async_client
     )
     respaldos = [
         _build_chat_model(
-            m, rate_limiter, tokens_estimados, temperature, max_tokens, http_async_client
+            m, rate_limiter, tokens_estimados, temperature, max_tokens, base_url, http_async_client
         )
         for m in orden[1:]
     ]
