@@ -20,6 +20,10 @@ UI de Streamlit para NuevaMente. Primera versión funcional:
 - Estética: hero navy oscuro con vórtice de fondo, acento cian con glow
 - Navegación por pestañas: Inicio | Agentes | Cómo funciona | Casos de uso | Seguridad | Actividad Agentica
 
+Acceso público con login de Google (seguridad/auth.py, st.login): cada usuario se
+identifica con su `sub` de Google (user_id), que aísla sus documentos en OCI y en
+Chroma. Hay cuotas de corridas por día (seguridad/cuotas.py).
+
 Nota de arquitectura: cada interacción abre una conexión nueva al grafo
 (asyncio.run + construir_grafo) y la cierra al terminar.
 """
@@ -45,6 +49,8 @@ from grafo import construir_grafo
 # Nota: el módulo se llama Cliente_agemte (typo histórico); no renombrar el import
 # hasta que el archivo fuente se renombre de forma coordinada.
 from Cliente_agemte import conectar_mcp, obtener_tools_langchain, extraer_texto_resultado
+from seguridad.auth import requerir_login
+from seguridad.cuotas import ErrorCuota, consumir_corrida, corridas_restantes, limite_usuario
 from seguridad.rate_limiter import RateLimiter
 from render_documento import CSS_DOCUMENTO, tipo_documento, html_documento
 
@@ -55,7 +61,7 @@ st.markdown(f"<style>{CSS_DOCUMENTO}</style>", unsafe_allow_html=True)
 # Constantes de configuración
 # --------------------------------------------------------------------------
 
-MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB (mismo tope que el servidor MCP: OCI_MAX_UPLOAD_MB)
 MAX_TIMELINE_NODOS = 40
 TIPOS_INTERRUPT = frozenset({
     "pedir_parametro",
@@ -572,6 +578,22 @@ button[data-baseweb="tab"][aria-selected="true"] p {
 """, unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------
+# Acceso: login con Google. Sin sesión válida la página se corta acá.
+# --------------------------------------------------------------------------
+
+USUARIO = requerir_login()
+
+with st.sidebar:
+    st.markdown("**Tu cuenta**")
+    st.caption(USUARIO.nombre or USUARIO.email)
+    if USUARIO.nombre:
+        st.caption(USUARIO.email)
+    st.caption(
+        f"Corridas disponibles hoy: {corridas_restantes(USUARIO.user_id)} de {limite_usuario()}"
+    )
+    st.button("Cerrar sesión", on_click=st.logout, use_container_width=True)
+
+# --------------------------------------------------------------------------
 # Helpers async
 # --------------------------------------------------------------------------
 
@@ -594,19 +616,20 @@ NOMBRES_NODOS = {
 }
 
 
-async def _subir_documento(nombre_archivo: str, contenido_bytes: bytes) -> dict:
+async def _subir_documento(nombre_archivo: str, contenido_bytes: bytes, user_id: str) -> dict:
     contenido_b64 = base64.b64encode(contenido_bytes).decode("ascii")
     async with conectar_mcp() as sesion:
         tools = {t.name: t for t in await obtener_tools_langchain(sesion)}
         resultado = await tools["subir_documento_fuente"].ainvoke({
             "nombre_archivo": nombre_archivo,
             "contenido_base64": contenido_b64,
+            "user_id": user_id,
         })
         texto = extraer_texto_resultado(resultado)
         return json.loads(texto)
 
 
-async def _subir_reporte_generado(nombre_archivo: str, contenido_html: str) -> dict:
+async def _subir_reporte_generado(nombre_archivo: str, contenido_html: str, user_id: str) -> dict:
     contenido_b64 = base64.b64encode(contenido_html.encode("utf-8")).decode("ascii")
     async with conectar_mcp() as sesion:
         tools = {t.name: t for t in await obtener_tools_langchain(sesion)}
@@ -616,6 +639,7 @@ async def _subir_reporte_generado(nombre_archivo: str, contenido_html: str) -> d
         resultado = await tool.ainvoke({
             "nombre_archivo": nombre_archivo,
             "contenido_base64": contenido_b64,
+            "user_id": user_id,
         })
         texto = extraer_texto_resultado(resultado)
         return json.loads(texto)
@@ -670,7 +694,7 @@ async def _consumir_stream(grafo, entrada, config, contenedor) -> None:
                     )
     except Exception as exc:
         logger.exception("Error durante astream del grafo")
-        mensaje = str(exc) or type(exc).__name__
+        mensaje = getattr(exc, "mensaje_usuario", None) or str(exc) or type(exc).__name__
         _pintar_nodo(
             contenedor,
             "_error",
@@ -687,8 +711,8 @@ async def _consumir_stream(grafo, entrada, config, contenedor) -> None:
                 pass
 
 
-async def _iniciar_flujo(tema: str, thread_id: str, contenedor_timeline):
-    config = {"configurable": {"thread_id": thread_id}}
+async def _iniciar_flujo(tema: str, thread_id: str, user_id: str, contenedor_timeline):
+    config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
     estado_inicial = {
         "mensajes": [],
         "thread_id": thread_id,
@@ -705,8 +729,8 @@ async def _iniciar_flujo(tema: str, thread_id: str, contenedor_timeline):
         return await grafo.aget_state(config)
 
 
-async def _resumir_flujo(resume_payload: dict, thread_id: str, contenedor_timeline):
-    config = {"configurable": {"thread_id": thread_id}}
+async def _resumir_flujo(resume_payload: dict, thread_id: str, user_id: str, contenedor_timeline):
+    config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
     async with _grafo_sesion() as grafo:
         await _consumir_stream(
             grafo, Command(resume=resume_payload), config, contenedor_timeline
@@ -950,11 +974,11 @@ def _renderizar_item(indice: int, item: dict, imagen=None):
         if item.get("advertencia"):
             st.warning(item["advertencia"])
     elif tipo == "flashcard":
+        # La columna del ícono se mantiene siempre: todas las cards quedan alineadas
+        # aunque alguna no tenga ícono.
+        col_img, col_card = st.columns([1, 8])
         if imagen:
-            col_img, col_card = st.columns([1, 8])
             col_img.image(imagen, width=48)
-        else:
-            col_card = st.container()
         with col_card:
             with st.expander(f"🃏 {item.get('frente', '')}"):
                 st.write(item.get("dorso", ""))
@@ -1506,7 +1530,7 @@ def _botones_accion_reporte(
         if st.button("☁ Guardar en OCI", use_container_width=True, type="secondary"):
             with st.spinner("Subiendo reporte a Object Storage…"):
                 try:
-                    res = correr(_subir_reporte_generado(nombre_archivo, html_print))
+                    res = correr(_subir_reporte_generado(nombre_archivo, html_print, USUARIO.user_id))
                     objeto = res.get("objeto_id") or res.get("path") or str(res)
                     st.success(f"✅ Guardado en OCI: `{objeto}`")
                 except Exception as e:
@@ -1533,7 +1557,12 @@ def _mostrar_resultado(
     error = values.get("error")
     interrupt_data = interrupt_data or {}
 
-    if status == "cancelado" and not resultado:
+    if error:
+        st.markdown(
+            '<span class="nm-badge pendiente">⚠ Error</span>',
+            unsafe_allow_html=True,
+        )
+    elif status == "cancelado" and not resultado:
         st.markdown(
             '<span class="nm-badge pendiente">Pedido cancelado</span>',
             unsafe_allow_html=True,
@@ -1816,12 +1845,16 @@ with tab_actividad:
         """Reanuda el grafo con la respuesta del usuario, actualiza el estado y refresca la pantalla."""
         contenedor = _contenedor_timeline()
         try:
-            estado = correr(_resumir_flujo(payload, st.session_state.thread_id, contenedor))
+            estado = correr(_resumir_flujo(payload, st.session_state.thread_id, USUARIO.user_id, contenedor))
             _aplicar_estado(estado)
         except Exception as exc:
             logger.exception("Fallo al reanudar flujo")
-            st.error("Ocurrió un error al continuar el pipeline. Revisá la actividad en vivo.")
-            st.caption(str(exc))
+            mensaje = getattr(exc, "mensaje_usuario", None)
+            if mensaje:
+                st.error(mensaje)
+            else:
+                st.error("Ocurrió un error al continuar el pipeline. Revisá la actividad en vivo.")
+                st.caption(str(exc))
             st.session_state.fase = "fin"
             return
         st.rerun()
@@ -1851,7 +1884,7 @@ with tab_actividad:
                                     )
                                 else:
                                     resultado_subida = correr(
-                                        _subir_documento(archivo_subido.name, data)
+                                        _subir_documento(archivo_subido.name, data, USUARIO.user_id)
                                     )
                                     st.success(
                                         f"✅ Subido a `{resultado_subida['objeto_id']}` "
@@ -1872,15 +1905,19 @@ with tab_actividad:
                     try:
                         estado = correr(
                             _iniciar_flujo(
-                                tema_limpio, st.session_state.thread_id, contenedor
+                                tema_limpio, st.session_state.thread_id, USUARIO.user_id, contenedor
                             )
                         )
                         _aplicar_estado(estado)
                         st.rerun()
                     except Exception as exc:
                         logger.exception("Fallo al iniciar flujo")
-                        st.error("No se pudo iniciar el pipeline. Revisá la actividad en vivo.")
-                        st.caption(str(exc))
+                        mensaje = getattr(exc, "mensaje_usuario", None)
+                        if mensaje:
+                            st.error(mensaje)
+                        else:
+                            st.error("No se pudo iniciar el pipeline. Revisá la actividad en vivo.")
+                            st.caption(str(exc))
 
         elif fase == "esperando_parametro":
             datos_paso = st.session_state.interrupt_actual or {}
@@ -1964,13 +2001,18 @@ with tab_actividad:
             col_ok, col_cancel = st.columns([2, 1])
             with col_ok:
                 if st.button("Ejecutar ▶", type="primary", use_container_width=True):
-                    _reanudar({
-                        "confirmado": True,
-                        "perfil_destinatario": perfil_sel,
-                        "formato_salida": formato_sel,
-                        "nicho_sector": nicho_sel,
-                        "nivel_detalle": nivel_sel,
-                    })
+                    try:
+                        consumir_corrida(USUARIO.user_id)
+                    except ErrorCuota as exc:
+                        st.error(exc.mensaje)
+                    else:
+                        _reanudar({
+                            "confirmado": True,
+                            "perfil_destinatario": perfil_sel,
+                            "formato_salida": formato_sel,
+                            "nicho_sector": nicho_sel,
+                            "nivel_detalle": nivel_sel,
+                        })
             with col_cancel:
                 if st.button("Cancelar", key="conf_cancelar", use_container_width=True):
                     _reanudar({"confirmado": False})

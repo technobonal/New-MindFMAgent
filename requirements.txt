@@ -33,3 +33,6 @@ streamlit>=1.38.0
 # --- Config / validación ---
 python-dotenv==1.2.3
 pydantic==2.13.5
+
+streamlit>=1.42
+Authlib>=1.3.2

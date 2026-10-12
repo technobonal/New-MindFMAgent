@@ -25,7 +25,21 @@ Nodos con LLM real:
   - critico_revisor (agentes/agente_critico_revisor.py: anclaje por coseno + 1 llamada LLM)
   - modificador (agentes/agente_modificador.py, reusa el core del Redactor)
 
-Nodos STUB: ninguno (quedan pendientes validadores.py y guardia_red.py).
+Seguridad (determinística, sin LLM):
+  - seguridad/validadores.py: nodo validacion (tema y parámetros), ingesta (objeto_id
+    y texto del documento), tema que extrae el Supervisor (antes de consultar al
+    Investigador) e instrucción del usuario al Modificador.
+  - seguridad/permisos_herramientas.py: qué tool MCP puede invocar cada etapa
+    determinística (buscador_documentos, ingesta, guardado_final). Los agentes con
+    LLM no reciben tools MCP.
+  - Aislamiento por usuario: el user_id (config["configurable"]["user_id"], el `sub`
+    de Google) lo pone la app y lo pasan los nodos determinísticos a las tools MCP;
+    el servidor arma los prefijos físicos. Los ids de objeto del grafo son LÓGICOS
+    (fuentes/<nombre>), sin user_id.
+  - seguridad/guardia_red.py: destinos de red permitidos; la usan llm_client.py y
+    rag/embeddings.py, no este módulo.
+
+Nodos STUB: ninguno.
 
 RAG: construir_grafo() recibe `buscar_chunks`, `indexar_documento` y
 `calcular_anclaje` (vienen de rag/vectorstore.py). Si no se pasan, se usan
@@ -57,7 +71,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Callable
 
@@ -83,7 +99,18 @@ from agentes.parametros import (
 )
 from agentes.supervisor import construir_nodo_supervisor
 from Cliente_agemte import conectar_mcp, con_reintento_mcp, extraer_texto_resultado, extraer_lista_resultado, obtener_tools_langchain
+from seguridad.permisos_herramientas import obtener_herramienta_autorizada
 from seguridad.rate_limiter import RateLimiter
+from seguridad.validadores import (
+    ErrorValidacionEntrada,
+    validar_documento_extraido,
+    validar_entrada_usuario,
+    validar_instruccion_modificacion,
+    validar_objeto_fuente,
+    validar_tema_consulta,
+)
+from pydantic import ValidationError
+from src.contracts import PaqueteEducativo
 from src.errores import MENSAJE_POR_DEFECTO, CodigoError
 
 log = logging.getLogger(__name__)
@@ -92,6 +119,9 @@ log = logging.getLogger(__name__)
 MAX_INTENTOS_REDACTOR = 3        # 1 intento inicial + 2 correcciones
 MAX_INTENTOS_MODIFICADOR = 3     # por cada instrucción de modificación del usuario
 MAX_VUELTAS_MODIFICACION = 5     # instrucciones de modificación por sesión
+# Mismo bucket que usa el servidor MCP (BUCKET_NAME). Va dentro del JSON guardado (almacenamiento_oci).
+BUCKET_OCI = os.getenv("NUEVAMENTE_BUCKET", "nuevamente-storage")
+PREFIJO_FORMATEADOS = "generados/formateados/"
 
 # (texto, objeto_id, user_id) -> None.
 # Chunking + embeddings + indexado en Chroma. Debe ser IDEMPOTENTE: si ese
@@ -113,16 +143,26 @@ BuscarChunksEnAlcance = Callable[[str, int, str, str], list[tuple[str, str, floa
 
 def _user_id(config: RunnableConfig) -> str:
     """
-    El thread_id del checkpointer es el email del usuario (st.user.email),
-    así que sirve como identificador de aislamiento sin sumar campos al estado.
+    Identificador de aislamiento del usuario (el `sub` de Google, lo pone la app en
+    config["configurable"]["user_id"]). Se usa para las tools MCP (prefijos del
+    bucket) y para filtrar Chroma. Si la app no lo manda, cae al thread_id
+    (compatibilidad con scripts de prueba sueltos).
     """
-    return str(config["configurable"]["thread_id"])
+    configurable = config["configurable"]
+    return str(configurable.get("user_id") or configurable["thread_id"])
 
 
 def _nombre_versionado(nombre_archivo: str, version: int) -> str:
-    """'manual.pdf' + v2 -> 'manual_v2.pdf' (no sobreescribe versiones previas)."""
+    """
+    'manual.pdf' + v2 -> 'manual_v2.pdf.json'.
+
+    La versión vive SOLO en el nombre (el JSON respeta PaqueteEducativo y no lleva
+    'version'). El contenido es JSON, así que el nombre termina en .json; se conserva
+    la extensión original dentro del nombre para que 'manual.pdf' y 'manual.md' no
+    se pisen entre sí, y cada versión (v1, v2...) tampoco sobreescribe la anterior.
+    """
     p = PurePosixPath(nombre_archivo)
-    return str(p.with_name(f"{p.stem}_v{version}{p.suffix}"))
+    return str(p.with_name(f"{p.stem}_v{version}{p.suffix}.json"))
 
 
 # --------------------------------------------------------------------------
@@ -202,13 +242,17 @@ def _matchear_documentos(tema: str, documentos: list[dict]) -> list[str]:
     return candidatos
 
 
-async def nodo_buscador_documentos(state: AgentState) -> dict:
+async def nodo_buscador_documentos(state: AgentState, config: RunnableConfig) -> dict:
     tema = state.get("tema_pedido_chat", "")
+    user_id = _user_id(config)
 
     async def _listar():
         async with conectar_mcp() as sesion:
-            tools = {t.name: t for t in await obtener_tools_langchain(sesion)}
-            resultado = await tools["listar_documentos_fuente"].ainvoke({})
+            herramientas = await obtener_tools_langchain(sesion)
+            herramienta = obtener_herramienta_autorizada(
+                herramientas, etapa="buscador_documentos", nombre="listar_documentos_fuente"
+            )
+            resultado = await herramienta.ainvoke({"user_id": user_id})
             return extraer_lista_resultado(resultado)
 
     documentos = await con_reintento_mcp(_listar)
@@ -251,6 +295,7 @@ def nodo_confirmar_ejecucion(state: AgentState) -> dict:
          "objeto_id_confirmado": str | None}   # este último es opcional
 
     Lo que falte o venga inválido conserva el valor que ya había en el estado.
+    El objeto_id que llega de la UI se valida en la Ingesta, antes de descargarlo.
     """
     respuesta = interrupt({
         "tipo": "confirmar_ejecucion",
@@ -291,40 +336,84 @@ def enrutar_tras_confirmar_ejecucion(state: AgentState) -> str:
 
 def construir_nodo_ingesta(indexar_documento: IndexarDocumento):
     async def nodo_ingesta(state: AgentState, config: RunnableConfig) -> dict:
-        objeto_id = state["objeto_id_confirmado"]
         user_id = _user_id(config)
+
+        # El objeto_id llega desde la UI: se valida antes de pedirle nada al servidor MCP.
+        try:
+            objeto_id = validar_objeto_fuente(state.get("objeto_id_confirmado"))
+        except ErrorValidacionEntrada as exc:
+            log.warning("ingesta: documento rechazado (%s)", exc.codigo)
+            return {"estado": "ingesta_fallida", "status": "error", "error": exc.mensaje}
 
         async def _descargar():
             async with conectar_mcp() as sesion:
-                tools = {t.name: t for t in await obtener_tools_langchain(sesion)}
-                resultado = await tools["descargar_documento"].ainvoke({"objeto_id": objeto_id})
+                herramientas = await obtener_tools_langchain(sesion)
+                herramienta = obtener_herramienta_autorizada(
+                    herramientas, etapa="ingesta", nombre="descargar_documento"
+                )
+                resultado = await herramienta.ainvoke({"objeto_id": objeto_id, "user_id": user_id})
                 texto = extraer_texto_resultado(resultado)
                 return json.loads(texto)
 
         documento = await con_reintento_mcp(_descargar)
 
+        # Valida y limpia el texto extraído (los PDF suelen dejar caracteres de control).
+        # Si no queda texto suficiente o supera el tamaño permitido, se corta el flujo limpio.
+        try:
+            texto_documento = validar_documento_extraido(
+                documento.get("texto_extraido") if isinstance(documento, dict) else None
+            )
+        except ErrorValidacionEntrada as exc:
+            log.warning("ingesta: documento no válido (%s)", exc.codigo)
+            return {"estado": "ingesta_fallida", "status": "error", "error": exc.mensaje}
+
         # Chunking + embeddings (HF remoto, bloqueante) + Chroma, fuera del
         # event loop. El texto va directo a Chroma, no al state, para no
         # inflar el checkpoint de SQLite.
-        await asyncio.to_thread(indexar_documento, documento["texto_extraido"], objeto_id, user_id)
+        try:
+            await asyncio.to_thread(indexar_documento, texto_documento, objeto_id, user_id)
+        except Exception as exc:
+            # Falla del servicio de embeddings (sin créditos, límite de uso, clave
+            # inválida, red). ErrorEmbeddings (rag/embeddings.py) trae un
+            # `mensaje_usuario` pensado para mostrarse. Se corta el flujo limpio
+            # (status="error" -> END) en vez de dejar el hilo trabado en este nodo.
+            mensaje = getattr(exc, "mensaje_usuario", None)
+            if not mensaje:
+                raise  # cualquier otro error conserva el comportamiento actual
+            log.error("ingesta: falló el servicio de embeddings: %s", exc)
+            return {"estado": "ingesta_fallida", "status": "error", "error": mensaje}
 
         return {"estado": "ingesta_completada"}
 
     return nodo_ingesta
 
 
+def enrutar_tras_ingesta(state: AgentState) -> str:
+    # status="error" lo deja la ingesta cuando el documento no es válido o falla
+    # el servicio de embeddings.
+    return "error" if state.get("status") == "error" else "ok"
+
+
 # --------------------------------------------------------------------------
-# Validación (STUB -- seguridad/validadores.py pendiente)
+# Validación (REAL -- seguridad/validadores.py)
 # --------------------------------------------------------------------------
 
 def nodo_validacion(state: AgentState) -> dict:
-    # TODO: sanitización + heurística de prompt injection real
-    # (seguridad/validadores.py pendiente de escribir para este proyecto).
-    return {"input_sanitizado": True}
+    """
+    Valida tema y parámetros tipados antes de la primera llamada a un LLM.
+    El documento ya se validó en la Ingesta. Si pasa, deja el tema normalizado
+    en el estado; si no, corta con status="error" y un mensaje seguro.
+    """
+    try:
+        tema = validar_entrada_usuario(state)
+    except ErrorValidacionEntrada as exc:
+        log.warning("validacion: entrada rechazada (%s)", exc.codigo)
+        return {"input_sanitizado": False, "status": "error", "error": exc.mensaje}
+    return {"tema_pedido_chat": tema, "input_sanitizado": True}
 
 
 def enrutar_tras_validacion(state: AgentState) -> str:
-    return "ok"  # TODO: "rechazado" cuando validadores.py esté escrito
+    return "ok" if state.get("input_sanitizado") else "rechazado"
 
 
 # --------------------------------------------------------------------------
@@ -340,6 +429,18 @@ def construir_nodo_investigador_con_alcance(rate_limiter: RateLimiter, buscar_ch
     def nodo_investigador(state: AgentState, config: RunnableConfig) -> dict:
         user_id = _user_id(config)
         objeto_id = state["objeto_id_confirmado"]
+
+        # El tema lo extrae un LLM (Supervisor): se acota antes de usarlo como consulta.
+        try:
+            validar_tema_consulta(state.get("tema_consulta"))
+        except ErrorValidacionEntrada as exc:
+            log.warning("investigador: tema_consulta rechazado (%s)", exc.codigo)
+            return {
+                "status": "error",
+                "error": exc.mensaje,
+                "mensaje_aclaracion": None,
+                "fuente_confirmada": None,
+            }
 
         def _buscar_en_alcance(consulta: str, k: int) -> list[tuple[str, str, float]]:
             return buscar_chunks(consulta, k, user_id, objeto_id)
@@ -401,7 +502,8 @@ def enrutar_tras_revisor(state: AgentState) -> str:
 # Guardado final (REAL -- usa guardar_resultado_formateado, ya validado)
 # --------------------------------------------------------------------------
 
-async def nodo_guardado_final(state: AgentState) -> dict:
+async def nodo_guardado_final(state: AgentState, config: RunnableConfig) -> dict:
+    user_id = _user_id(config)
     nombre_original = state["objeto_id_confirmado"].replace(PREFIJO_FUENTES, "", 1)
 
     # v1 = generación original; cada modificación del usuario suma una versión.
@@ -411,20 +513,55 @@ async def nodo_guardado_final(state: AgentState) -> dict:
     # El estado final depende de si el Revisor aprobó, no de cuántos intentos hubo.
     status = "exito" if state.get("aprobado") else "exito_con_advertencias"
 
+    objeto_id_destino = f"{PREFIJO_FORMATEADOS}{nombre_archivo}"
+
+    # El JSON respeta PaqueteEducativo (src/contracts/response.py): sin 'version'
+    # (va en el nombre) y con almacenamiento_oci. Ese bloque se arma ANTES de subir,
+    # así que declara el destino; el resultado real de la carga queda en el state.
     contenido = {
         "status": status,
-        "version": version,
         "metadatos": state.get("metadatos", {}),
         "contenido_adaptado": state.get("contenido_adaptado", {}),
         "evaluacion_calidad": state.get("evaluacion_calidad", {}),
+        "almacenamiento_oci": {
+            "bucket": BUCKET_OCI,
+            "objeto_id": objeto_id_destino,
+            "status_upload": "completado",
+            "objeto_documento_original": state["objeto_id_confirmado"],
+        },
+        "advertencias": [],
+        "generado_en": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Validación contra el contrato (D-05: nunca bloquea el guardado).
+    #  - Solo campos de más (extra_forbidden, p. ej. metadatos.idioma o
+    #    mensaje_principal del Resumen Ejecutivo): se guarda todo igual, sin bajar
+    #    el status, y se deja un log informativo. No se descarta contenido.
+    #  - Falta un campo o hay un valor inválido: exito_con_advertencias + advertencia.
+    try:
+        PaqueteEducativo.model_validate(contenido)
+    except ValidationError as exc:
+        errores = exc.errors()
+        extras = [".".join(str(p) for p in e["loc"]) for e in errores if e["type"] == "extra_forbidden"]
+        graves = [(".".join(str(p) for p in e["loc"]), e["type"]) for e in errores if e["type"] != "extra_forbidden"]
+        if extras:
+            log.info("guardado_final: campos fuera del contrato PaqueteEducativo (se guardan igual): %s", extras)
+        if graves:
+            log.warning("guardado_final: el paquete no cumple PaqueteEducativo: %s", graves)
+            status = "exito_con_advertencias"
+            contenido["status"] = status
+            contenido["advertencias"].append("El contenido no cumple por completo el formato de salida esperado.")
 
     async def _guardar():
         async with conectar_mcp() as sesion:
-            tools = {t.name: t for t in await obtener_tools_langchain(sesion)}
-            resultado = await tools["guardar_resultado_formateado"].ainvoke({
+            herramientas = await obtener_tools_langchain(sesion)
+            herramienta = obtener_herramienta_autorizada(
+                herramientas, etapa="guardado_final", nombre="guardar_resultado_formateado"
+            )
+            resultado = await herramienta.ainvoke({
                 "nombre_archivo": nombre_archivo,
                 "contenido": contenido,
+                "user_id": user_id,
             })
             texto = extraer_texto_resultado(resultado)
             return json.loads(texto)
@@ -442,7 +579,7 @@ async def nodo_guardado_final(state: AgentState) -> dict:
         log.warning("guardado_final: falló la carga a OCI: %s", exc)
         almacenamiento_oci = {
             "bucket": "",
-            "objeto_id": f"generados/formateados/{nombre_archivo}",
+            "objeto_id": objeto_id_destino,
             "status_upload": "fallido",
             "detalle_fallo": MENSAJE_POR_DEFECTO[CodigoError.FALLO_PERSISTENCIA],
         }
@@ -478,6 +615,14 @@ def nodo_confirmar_modificacion(state: AgentState) -> dict:
     if not instruccion:
         return {"instruccion_modificacion": None, "aviso_modificacion": None}
 
+    # La instrucción va al Modificador (LLM): se valida antes. Si no es válida no
+    # cuenta como vuelta y se vuelve a preguntar con un aviso.
+    try:
+        instruccion = validar_instruccion_modificacion(instruccion)
+    except ErrorValidacionEntrada as exc:
+        log.warning("confirmar_modificacion: instrucción rechazada (%s)", exc.codigo)
+        return {"instruccion_modificacion": None, "aviso_modificacion": exc.mensaje}
+
     # Cada instrucción nueva: cuenta como 1 vuelta de sesión y arranca con
     # el contador de correcciones del Modificador en cero.
     return {
@@ -490,7 +635,11 @@ def nodo_confirmar_modificacion(state: AgentState) -> dict:
 
 
 def enrutar_tras_confirmar_modificacion(state: AgentState) -> str:
-    return "modificar" if state.get("instruccion_modificacion") else "fin"
+    if state.get("instruccion_modificacion"):
+        return "modificar"
+    if state.get("aviso_modificacion"):
+        return "reintentar"  # instrucción inválida: se vuelve a preguntar con el aviso
+    return "fin"
 
 
 # --------------------------------------------------------------------------
@@ -564,7 +713,9 @@ async def construir_grafo(
         "confirmar_ejecucion", enrutar_tras_confirmar_ejecucion,
         {"ingesta": "ingesta", "cancelado": END},
     )
-    builder.add_edge("ingesta", "validacion")
+    builder.add_conditional_edges(
+        "ingesta", enrutar_tras_ingesta, {"ok": "validacion", "error": END},
+    )
     builder.add_conditional_edges(
         "validacion", enrutar_tras_validacion, {"rechazado": END, "ok": "supervisor"},
     )
@@ -600,7 +751,7 @@ async def construir_grafo(
     )
     builder.add_conditional_edges(
         "confirmar_modificacion", enrutar_tras_confirmar_modificacion,
-        {"modificar": "modificador", "fin": END},
+        {"modificar": "modificador", "reintentar": "confirmar_modificacion", "fin": END},
     )
 
     conexion = await aiosqlite.connect("checkpoints.sqlite")
