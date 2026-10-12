@@ -41,9 +41,11 @@ from seguridad.rate_limiter import RateLimiter
 
 log = logging.getLogger(__name__)
 
-UMBRAL_SOPORTADA = 0.80
-UMBRAL_PARCIAL = 0.70
-SCORE_MINIMO = 0.75
+from rag.embeddings import UMBRALES_ACTIVOS
+
+UMBRAL_SOPORTADA = UMBRALES_ACTIVOS["soportada"]
+UMBRAL_PARCIAL = UMBRALES_ACTIVOS["parcial"]
+SCORE_MINIMO = UMBRALES_ACTIVOS["score_minimo"]
 TEMPERATURA_REVISOR = 0.0
 MAX_TOKENS_REVISOR = 1500
 

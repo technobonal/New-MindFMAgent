@@ -4,7 +4,13 @@ rag/vectorstore.py
 Chunking + indexado + búsqueda en Chroma para NuevaMente.
 
 Diseño:
-  - UNA sola colección ("documentos") en espacio COSENO.
+  - UNA sola colección ("documentos") en espacio COSENO, por proveedor de embeddings.
+  - Directorio de persistencia por proveedor: los vectores de HF (768 dim) y los de
+    Cohere (1024 dim) NO se pueden mezclar en Chroma, así que cada proveedor tiene
+    su propio directorio:
+        hf      -> CHROMA_DIR            (por defecto "chroma_db", el que ya tenés)
+        cohere  -> CHROMA_DIR + "_cohere"
+    Cambiar de proveedor es cambiar EMBEDDINGS_PROVIDER en el .env; no se borra nada.
   - Aislamiento por metadata: cada chunk lleva user_id y objeto_id, y toda
     consulta/borrado filtra por ambos. Dos usuarios (o dos documentos) nunca
     se mezclan.
@@ -33,12 +39,16 @@ import threading
 from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from rag.embeddings import obtener_embeddings
+from rag.embeddings import PROVEEDOR_EMBEDDINGS, obtener_embeddings
 
-DIRECTORIO_CHROMA = os.environ.get("CHROMA_DIR", "chroma_db")
+_DIRECTORIO_BASE = os.environ.get("CHROMA_DIR", "chroma_db")
+# hf conserva la ruta histórica; cualquier otro proveedor va a su propio directorio.
+DIRECTORIO_CHROMA = (
+    _DIRECTORIO_BASE if PROVEEDOR_EMBEDDINGS == "hf" else f"{_DIRECTORIO_BASE}_{PROVEEDOR_EMBEDDINGS}"
+)
 NOMBRE_COLECCION = "documentos"
 
-# e5-base admite 512 tokens; ~1000 caracteres (~250 tokens) deja margen.
+# Ambos modelos admiten 512 tokens; ~1500 caracteres (~400 tokens) deja margen.
 CHUNK_SIZE = 1500
 CHUNK_OVERLAP = 200
 
@@ -168,7 +178,8 @@ def calcular_anclaje(afirmaciones: list[str], user_id: str, objeto_id: str) -> d
 
 
 if __name__ == "__main__":
-    # Prueba de humo contra HF real + Chroma local: python -m rag.vectorstore
+    # Prueba de humo contra el proveedor activo + Chroma local: python -m rag.vectorstore
+    print(f"Proveedor: {PROVEEDOR_EMBEDDINGS} | Chroma: {DIRECTORIO_CHROMA}")
     usuario, doc = "prueba@local", "fuentes/prueba.txt"
     texto = (
         "Oracle Object Storage guarda objetos dentro de buckets. "

@@ -18,7 +18,9 @@ from agent_state import AgentState
 from llm_client import get_llm
 from seguridad.rate_limiter import RateLimiter
 
-UMBRAL_SIMILITUD = 0.78
+from rag.embeddings import UMBRALES_ACTIVOS
+
+UMBRAL_SIMILITUD = UMBRALES_ACTIVOS["similitud"]
 TOP_K = 4
 MAX_CHARS_CHUNK_PROMPT = 300
 
