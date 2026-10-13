@@ -141,7 +141,7 @@ def construir_nodo_revisor(
     max_intentos_modificador: int,
 ):
     async def nodo_critico_revisor(state: AgentState, config: RunnableConfig) -> dict:
-        user_id = str(config["configurable"]["thread_id"])
+        user_id = str(config["configurable"].get("user_id") or config["configurable"]["thread_id"])
         objeto_id = state.get("objeto_id_confirmado") or ""
         contenido = state.get("contenido_adaptado") or {}
         items = contenido.get("items") or []
