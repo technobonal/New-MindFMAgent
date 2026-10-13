@@ -7,3 +7,5 @@ cuotas.sqlite*
 chroma_db*/
 .streamlit/secrets.toml
 ocid1*
+
+*.pem
