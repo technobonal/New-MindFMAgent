@@ -13,6 +13,7 @@ al servidor de Object Storage de este proyecto.
 import asyncio
 import logging
 import os
+import sys
 import anyio  # <- agregar esta línea
 from contextlib import asynccontextmanager
 
@@ -28,7 +29,7 @@ MAX_REINTENTOS_CONEXION = 4  # antes 2 -- con una falla intermitente, más inten
 async def conectar_mcp():
     print(f"[MCP] Abriendo subproceso...", flush=True)
     parametros_servidor = StdioServerParameters(
-        command="python",
+        command=sys.executable,  # mismo intérprete/venv que la app (no depende del PATH)
         args=["servidor_objeStorageOracle.py"],
         env=os.environ.copy(),
     )

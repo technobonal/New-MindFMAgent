@@ -88,12 +88,63 @@ server = MCPServer("nuevamente-object-storage")
 _client_cache = None
 _namespace_cache = None
 
+# Variables de entorno para autenticar con una API key (usuario IAM dedicado)
+# fuera de OCI, p. ej. Streamlit Community Cloud, donde no hay Instance
+# Principal ni ~/.oci/config. Con secrets de nivel superior de Streamlit llegan
+# como variables de entorno, y el cliente MCP las hereda en el subproceso.
+_VARS_API_KEY = (
+    "OCI_USER_OCID",
+    "OCI_TENANCY_OCID",
+    "OCI_FINGERPRINT",
+    "OCI_REGION",
+    "OCI_PRIVATE_KEY",
+)
+
+
+def _config_desde_entorno() -> dict | None:
+    """
+    Arma la config de OCI a partir de variables de entorno (auth por API key).
+
+    Devuelve None si NO hay ninguna de las variables (se sigue con Instance
+    Principal / config file como siempre). Si hay algunas pero faltan otras,
+    falla con un mensaje claro en vez de caer en silencio a otro método.
+    El contenido de la clave nunca se imprime ni se incluye en errores.
+    """
+    valores = {nombre: (os.environ.get(nombre) or "").strip() for nombre in _VARS_API_KEY}
+    if not any(valores.values()):
+        return None
+
+    faltan = [nombre for nombre, valor in valores.items() if not valor]
+    if faltan:
+        raise RuntimeError(
+            "Configuración de OCI incompleta. Faltan variables: " + ", ".join(faltan)
+        )
+
+    clave = valores["OCI_PRIVATE_KEY"]
+    # Algunos paneles de secrets guardan los saltos de línea como "\n" literales.
+    if "\\n" in clave and "\n" not in clave:
+        clave = clave.replace("\\n", "\n")
+
+    config = {
+        "user": valores["OCI_USER_OCID"],
+        "tenancy": valores["OCI_TENANCY_OCID"],
+        "fingerprint": valores["OCI_FINGERPRINT"],
+        "region": valores["OCI_REGION"],
+        "key_content": clave,
+    }
+    oci.config.validate_config(config)
+    return config
+
 
 def _get_client():
     """
     En la VM de producción usa Instance Principal automáticamente.
     En desarrollo local, seteá OCI_LOCAL_DEV=1 para saltar directo al
     config file y evitar la demora larga del timeout de Instance Principal.
+
+    Fuera de OCI (p. ej. Streamlit Community Cloud) usa una API key de un
+    usuario IAM dedicado si están definidas OCI_USER_OCID, OCI_TENANCY_OCID,
+    OCI_FINGERPRINT, OCI_REGION y OCI_PRIVATE_KEY (ver _config_desde_entorno).
 
     Cachea el cliente y el namespace en memoria: la autenticación y el
     get_namespace() solo se hacen la primera vez que se llama dentro de
@@ -104,9 +155,13 @@ def _get_client():
     if _client_cache is not None:
         return _client_cache, _namespace_cache
 
+    config_api_key = None if os.environ.get("OCI_LOCAL_DEV") == "1" else _config_desde_entorno()
+
     if os.environ.get("OCI_LOCAL_DEV") == "1":
         config = oci.config.from_file()
         client = oci.object_storage.ObjectStorageClient(config)
+    elif config_api_key is not None:
+        client = oci.object_storage.ObjectStorageClient(config_api_key)
     else:
         try:
             signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
