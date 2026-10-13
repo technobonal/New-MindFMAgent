@@ -27,7 +27,7 @@ import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
 
-LIMITE_USUARIO_POR_DEFECTO = 5
+LIMITE_USUARIO_POR_DEFECTO = 10
 LIMITE_GLOBAL_POR_DEFECTO = 100
 
 
