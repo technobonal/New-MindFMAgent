@@ -625,8 +625,20 @@ async def _subir_documento(nombre_archivo: str, contenido_bytes: bytes, user_id:
             "contenido_base64": contenido_b64,
             "user_id": user_id,
         })
+
+        # Debug temporal (sacalo cuando funcione)
+        print("=== RAW subir_documento_fuente ===", flush=True)
+        print(repr(resultado), flush=True)
+        print("=================================", flush=True)
+
         texto = extraer_texto_resultado(resultado)
-        return json.loads(texto)
+        if not texto or not texto.strip():
+            raise ValueError(f"Tool devolvió vacío. Raw: {resultado!r}")
+
+        parseado = json.loads(texto) if isinstance(texto, str) else texto
+        if not isinstance(parseado, dict):
+            raise ValueError(f"Se esperaba dict, llegó: {type(parseado)}")
+        return parseado
 
 
 async def _subir_reporte_generado(nombre_archivo: str, contenido_html: str, user_id: str) -> dict:

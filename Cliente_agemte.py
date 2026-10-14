@@ -53,37 +53,100 @@ async def obtener_tools_langchain(sesion: ClientSession):
 
 
 def extraer_texto_resultado(resultado_tool) -> str:
-    """load_mcp_tools devuelve el contenido como lista de dicts
-    [{'type': 'text', 'text': '...'}] -- extrae el texto plano."""
+    """
+    Extrae el texto/JSON de lo que devuelve load_mcp_tools + ainvoke.
+    Tolera: lista de content blocks, string, dict, list, u objeto con .content
+    """
+    import json
+
+    # 1. Ya es string
+    if isinstance(resultado_tool, str):
+        return resultado_tool
+
+    # 2. Ya es dict o list (FastMCP / adapter lo deserializó)
+    if isinstance(resultado_tool, (dict, list)):
+        return json.dumps(resultado_tool, ensure_ascii=False)
+
+    # 3. Formato clásico MCP: lista de content blocks
     if isinstance(resultado_tool, list) and resultado_tool:
         primero = resultado_tool[0]
         if isinstance(primero, dict) and "text" in primero:
-            return primero["text"]
+            return primero["text"] or ""
+        # a veces el bloque es un objeto con atributo
+        if hasattr(primero, "text"):
+            return primero.text or ""
+
+    # 4. Objeto CallToolResult-like
+    if hasattr(resultado_tool, "content"):
+        content = resultado_tool.content
+        if isinstance(content, list) and content:
+            bloque = content[0]
+            if isinstance(bloque, dict) and "text" in bloque:
+                return bloque["text"] or ""
+            if hasattr(bloque, "text"):
+                return bloque.text or ""
+
+    # 5. Último recurso
     return str(resultado_tool)
 
 def extraer_lista_resultado(resultado_tool) -> list:
     """
-    Para tools MCP que devuelven una lista de dicts (ej. listar_documentos_fuente).
-    A diferencia de extraer_texto_resultado(), acá NO alcanza con leer el primer
-    content block: cuando la lista tiene un único elemento, MCP la serializa como
-    UN bloque con el objeto suelto (sin corchetes de lista); cuando tiene varios,
-    puede venir como un solo bloque con el array completo, o como un bloque por
-    item -- esta función cubre ambos casos y siempre devuelve una lista de dicts.
+    Para tools que devuelven lista de dicts (listar_documentos_fuente).
+    Nunca lanza JSONDecodeError: si no puede parsear, loguea y devuelve [].
     """
     import json
 
-    if not isinstance(resultado_tool, list):
-        return []
+    # Caso ideal: ya viene como list[dict]
+    if isinstance(resultado_tool, list):
+        if not resultado_tool:
+            return []
+        # ¿Es lista de dicts de documentos o lista de content blocks?
+        primero = resultado_tool[0]
+        if isinstance(primero, dict) and "objeto_id" in primero:
+            return resultado_tool  # ya son los documentos
+        if isinstance(primero, dict) and "text" in primero:
+            # content blocks → parsear
+            items = []
+            for bloque in resultado_tool:
+                texto = bloque.get("text") or ""
+                if not texto.strip():
+                    continue
+                try:
+                    parseado = json.loads(texto)
+                except json.JSONDecodeError:
+                    logger.error("JSON inválido en bloque: %r", texto[:200])
+                    continue
+                if isinstance(parseado, list):
+                    items.extend(parseado)
+                else:
+                    items.append(parseado)
+            return items
 
-    items = []
-    for bloque in resultado_tool:
-        if isinstance(bloque, dict) and "text" in bloque:
-            parseado = json.loads(bloque["text"])
-            if isinstance(parseado, list):
-                items.extend(parseado)
-            else:
-                items.append(parseado)
-    return items
+    # Vino como string JSON
+    if isinstance(resultado_tool, str):
+        if not resultado_tool.strip():
+            logger.warning("extraer_lista_resultado: string vacío")
+            return []
+        try:
+            parseado = json.loads(resultado_tool)
+            return parseado if isinstance(parseado, list) else [parseado]
+        except json.JSONDecodeError:
+            logger.error("JSON inválido: %r", resultado_tool[:200])
+            return []
+
+    # Vino como un solo dict
+    if isinstance(resultado_tool, dict):
+        return [resultado_tool]
+
+    # CallToolResult-like
+    if hasattr(resultado_tool, "content"):
+        return extraer_lista_resultado(resultado_tool.content)
+
+    logger.warning(
+        "extraer_lista_resultado: formato desconocido %s = %r",
+        type(resultado_tool), resultado_tool
+    )
+    return []
 
 
 async def con_reintento_mcp(coro_factory, max_reintentos: int = MAX_REINTENTOS_CONEXION):
