@@ -63,18 +63,21 @@ def extraer_texto_resultado(resultado_tool) -> str:
     if isinstance(resultado_tool, str):
         return resultado_tool
 
-    # 2. Ya es dict o list (FastMCP / adapter lo deserializó)
-    if isinstance(resultado_tool, (dict, list)):
-        return json.dumps(resultado_tool, ensure_ascii=False)
-
-    # 3. Formato clásico MCP: lista de content blocks
+    # 2. Formato clásico MCP: lista de content blocks, ej.
+    #    [{"type": "text", "text": "{...json...}"}]. Va ANTES que el volcado
+    #    genérico de listas: si no, la lista entera se serializaba a JSON y el
+    #    llamador recibía una lista en vez del dict que devolvió la tool.
     if isinstance(resultado_tool, list) and resultado_tool:
         primero = resultado_tool[0]
-        if isinstance(primero, dict) and "text" in primero:
+        if isinstance(primero, dict) and "text" in primero and "objeto_id" not in primero:
             return primero["text"] or ""
         # a veces el bloque es un objeto con atributo
-        if hasattr(primero, "text"):
+        if not isinstance(primero, dict) and hasattr(primero, "text"):
             return primero.text or ""
+
+    # 3. Ya es dict o list de datos (FastMCP / adapter lo deserializó)
+    if isinstance(resultado_tool, (dict, list)):
+        return json.dumps(resultado_tool, ensure_ascii=False)
 
     # 4. Objeto CallToolResult-like
     if hasattr(resultado_tool, "content"):
