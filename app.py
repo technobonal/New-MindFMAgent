@@ -578,7 +578,7 @@ button[data-baseweb="tab"][aria-selected="true"] p {
 """, unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------
-# Acceso: login con Google. Sin sesión válida la página se corta acá.
+# Acceso: login con Google. Sin sesión válida la página se corta aquí.
 # --------------------------------------------------------------------------
 
 USUARIO = requerir_login()
@@ -626,7 +626,7 @@ async def _subir_documento(nombre_archivo: str, contenido_bytes: bytes, user_id:
             "user_id": user_id,
         })
 
-        # Debug temporal (sacalo cuando funcione)
+        # Debug temporal (sácalo cuando funcione)
         print("=== RAW subir_documento_fuente ===", flush=True)
         print(repr(resultado), flush=True)
         print("=================================", flush=True)
@@ -940,7 +940,7 @@ def _validar_upload(archivo) -> str | None:
         return "No se recibió ningún archivo."
     nombre = (archivo.name or "").lower()
     if not any(nombre.endswith(ext) for ext in EXTENSIONES_PERMITIDAS):
-        return f"Extensión no permitida. Usá: {', '.join(sorted(EXTENSIONES_PERMITIDAS))}"
+        return f"Extensión no permitida. Usa: {', '.join(sorted(EXTENSIONES_PERMITIDAS))}"
     # Streamlit UploadedFile expone size en bytes cuando está disponible
     size = getattr(archivo, "size", None)
     if size is not None and size > MAX_UPLOAD_BYTES:
@@ -1535,7 +1535,7 @@ def _botones_accion_reporte(
             file_name=nombre_archivo,
             mime="text/html",
             use_container_width=True,
-            help="Descargá el reporte en HTML limpio. Abrilo y usá Ctrl+P / Cmd+P para imprimir o Guardar como PDF.",
+            help="Descarga el reporte en HTML limpio. Ábrelo y usa Ctrl+P / Cmd+P para imprimir o Guardar como PDF.",
         )
 
     with col2:
@@ -1658,7 +1658,7 @@ def _flow_html(pasos) -> str:
     partes = []
     for n, (titulo, texto, humano) in enumerate(pasos, start=1):
         marca = (
-            '<span class="nm-step-humano">👤 vos decidís</span>'
+            '<span class="nm-step-humano">👤 tú decides</span>'
             if humano else '<span class="nm-step-auto">🤖 automático</span>'
         )
         clase = " humano" if humano else ""
@@ -1689,9 +1689,9 @@ _HOME_HTML = """<div class="nm-home-head">
 <p class="nm-home-sub">The same obstacles keep repeating: long documents, generic content, answers without sources, and manual reviews. An team of agents solves these for you.</p>
 <span class="nm-pill">Start Learning Agentic AI →</span>
 </div>""" + _MOSAICO_HTML + """<div class="nm-trio">
-<div><div class="nm-trio-titulo">Los documentos largos frenan el estudio</div><div class="nm-trio-texto">Convertimos tu PDF en flashcards, quizzes, tutoriales o resúmenes ejecutivos listos para usar.</div><div class="nm-trio-pista">Mirá la pestaña Casos de uso</div></div>
-<div><div class="nm-trio-titulo">El contenido genérico no enseña</div><div class="nm-trio-texto">Redactamos para el perfil, nicho y nivel de detalle que elegís, y cada ítem queda anclado a tu fuente.</div><div class="nm-trio-pista">Mirá la pestaña Agentes</div></div>
-<div><div class="nm-trio-titulo">Revisar a mano no escala</div><div class="nm-trio-texto">Un Revisor mide anclaje y claridad y reintenta si hace falta. Vos aprobás o pedís cambios.</div><div class="nm-trio-pista">Mirá la pestaña Cómo funciona</div></div>
+<div><div class="nm-trio-titulo">Los documentos largos frenan el estudio</div><div class="nm-trio-texto">Convertimos tu PDF en flashcards, quizzes, tutoriales o resúmenes ejecutivos listos para usar.</div><div class="nm-trio-pista">Mira la pestaña Casos de uso</div></div>
+<div><div class="nm-trio-titulo">El contenido genérico no enseña</div><div class="nm-trio-texto">Redactamos para el perfil, nicho y nivel de detalle que eliges, y cada ítem queda anclado a tu fuente.</div><div class="nm-trio-pista">Mira la pestaña Agentes</div></div>
+<div><div class="nm-trio-titulo">Revisar a mano no escala</div><div class="nm-trio-texto">Un Revisor mide anclaje y claridad y reintenta si hace falta. Tú apruebas o pides cambios.</div><div class="nm-trio-pista">Mira la pestaña Cómo funciona</div></div>
 </div>"""
 
 
@@ -1728,7 +1728,7 @@ with tab_agentes:
         ("🎨", "Ilustrador",
          "Busca íconos para acompañar las flashcards.", "Opcional"),
         ("🛠", "Modificador",
-         "Aplica los cambios que pedís sobre el resultado y lo vuelve a revisar.", "Vos lo activás"),
+         "Aplica los cambios que pides sobre el resultado y lo vuelve a revisar.", "Tú lo activas"),
     ]), unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------
@@ -1737,14 +1737,14 @@ with tab_agentes:
 with tab_como:
     st.markdown("### De un tema a material listo para estudiar")
     st.markdown(_flow_html([
-        ("Contás qué querés aprender", "Escribís un tema o subís tu propio documento.", True),
-        ("Elegís parámetros", "Documento, perfil del destinatario y formato de salida, paso a paso.", True),
-        ("Confirmás el pedido", "Revisás todo y ajustás nicho y nivel de detalle antes de ejecutar.", True),
+        ("Cuéntanos qué quieres aprender", "Escribes un tema o subes tu propio documento.", True),
+        ("Eliges parámetros", "Documento, perfil del destinatario y formato de salida, paso a paso.", True),
+        ("Confirmas el pedido", "Revisas todo y ajustas nicho y nivel de detalle antes de ejecutar.", True),
         ("Se investiga la fuente", "El Investigador recupera los fragmentos relevantes del documento.", False),
         ("Se redacta", "El Redactor Pedagógico genera el contenido adaptado al perfil.", False),
         ("Se revisa", "El Revisor evalúa anclaje y claridad, y reintenta si hace falta.", False),
         ("Se guarda", "El resultado se guarda en Object Storage con su evaluación.", False),
-        ("Ajustás lo que quieras", "Pedís cambios y el Modificador los aplica.", True),
+        ("Ajustas lo que quieras", "Pides cambios y el Modificador los aplica.", True),
     ]), unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------
@@ -1752,7 +1752,7 @@ with tab_como:
 # --------------------------------------------------------------------------
 with tab_casos:
     st.markdown("### Un mismo concepto, cuatro formas de aprenderlo")
-    st.caption("Ejemplo ilustrativo con el concepto «embeddings». Elegí un formato:")
+    st.caption("Ejemplo ilustrativo con el concepto «embeddings». Elige un formato:")
     formato_demo = st.radio(
         "Formato",
         ["Flashcards", "Quiz", "Tutorial", "Resumen Ejecutivo"],
@@ -1764,7 +1764,7 @@ with tab_casos:
         if formato_demo == "Flashcards":
             st.markdown("**🃏 ¿Qué es un embedding?**")
             st.write("Un vector numérico que representa el significado de un texto: textos parecidos quedan cerca entre sí.")
-            st.caption("💡 Pensalo como coordenadas en un mapa de significados.")
+            st.caption("💡 Piénsalo como coordenadas en un mapa de significados.")
         elif formato_demo == "Quiz":
             st.markdown("**1. ¿Para qué sirve la similitud coseno en un RAG?**")
             st.markdown("- **a)** Comprimir documentos\n- **b)** Medir qué tan cerca están dos vectores\n- **c)** Traducir texto")
@@ -1773,14 +1773,14 @@ with tab_casos:
                 st.write("Compara el vector de la pregunta con los de los fragmentos para traer los más parecidos.")
         elif formato_demo == "Tutorial":
             st.markdown("**Paso 1. Dividir el documento en fragmentos**")
-            st.write("Cortá el texto en partes de tamaño parecido, con un pequeño solapamiento entre ellas.")
+            st.write("Corta el texto en partes de tamaño parecido, con un pequeño solapamiento entre ellas.")
             st.caption("✔ Resultado esperado: una lista de fragmentos con su ID.")
         else:
             st.markdown(
                 '<div class="nm-bluf">Los embeddings permiten buscar por significado y no por palabras exactas.</div>',
                 unsafe_allow_html=True,
             )
-            st.markdown('<div class="nm-reco">Indexá tus documentos una sola vez y reutilizá la búsqueda.</div>',
+            st.markdown('<div class="nm-reco">Indexa tus documentos una sola vez y reutiliza la búsqueda.</div>',
                         unsafe_allow_html=True)
     st.markdown(_cards_html([
         ("👩‍🏫", "Docentes", "Materiales listos a partir de sus propios documentos."),
@@ -1795,7 +1795,7 @@ with tab_seguridad:
     st.markdown("### Confianza por diseño")
     st.markdown(_cards_html([
         ("🧑‍💻", "Nada se ejecuta sin tu OK",
-         "Antes de generar siempre te mostramos el pedido y esperás a confirmar."),
+         "Antes de generar siempre te mostramos el pedido y esperas a confirmar."),
         ("📎", "Respaldo en la fuente",
          "Cada ítem apunta a los fragmentos del documento y el Revisor mide ese anclaje."),
         ("🙅", "Si no hay evidencia, no inventa",
@@ -1809,9 +1809,9 @@ with tab_seguridad:
     st.markdown("""
     Tus datos están protegidos.
 
-    Los agentes solo usan la información que vos autorizás y nunca actúan sin tu control.
+    Los agentes solo usan la información que tú autorizas y nunca actúan sin tu control.
 
-    Podés revisar, pausar o eliminar cualquier acción en todo momento.
+    Puedes revisar, pausar o eliminar cualquier acción en todo momento.
     """)
 
 # --------------------------------------------------------------------------
@@ -1828,8 +1828,8 @@ with tab_actividad:
                 <span class="linea-acento">generado con IA</span>
             </h1>
             <p class="nm-hero-sub">
-                Escribí un tema, elegí la fuente y dejá que el pipeline de agentes
-                redacte, revise y guarde el resultado por vos.
+                Escribe un tema, elige la fuente y deja que el pipeline de agentes
+                redacte, revise y guarde el resultado por ti.
             </p>
         </div>
     </div>
@@ -1865,7 +1865,7 @@ with tab_actividad:
             if mensaje:
                 st.error(mensaje)
             else:
-                st.error("Ocurrió un error al continuar el pipeline. Revisá la actividad en vivo.")
+                st.error("Ocurrió un error al continuar el pipeline. Revisa la actividad en vivo.")
                 st.caption(str(exc))
             st.session_state.fase = "fin"
             return
@@ -1875,42 +1875,46 @@ with tab_actividad:
         fase = st.session_state.fase
 
         if fase == "inicio":
-            with st.expander("📎 ¿No está el documento que buscás? Subilo acá"):
+            with st.expander("📎 ¿No encuentras el documento que buscas? Súbelo aquí"):
                 archivo_subido = st.file_uploader(
-                    "Elegí un PDF, Markdown o texto",
+                    "Elige un PDF, Markdown o texto",
                     type=["pdf", "md", "txt"],
                     help=f"Máximo {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
                 )
-                if archivo_subido and st.button("Subir a Object Storage"):
-                    err = _validar_upload(archivo_subido)
-                    if err:
-                        st.error(err)
-                    else:
-                        with st.spinner(f"Subiendo {archivo_subido.name}..."):
-                            try:
-                                data = archivo_subido.read()
-                                if len(data) > MAX_UPLOAD_BYTES:
-                                    st.error(
-                                        f"El archivo supera el límite de "
-                                        f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
-                                    )
-                                else:
-                                    resultado_subida = correr(
-                                        _subir_documento(archivo_subido.name, data, USUARIO.user_id)
-                                    )
-                                    st.success(
-                                        f"✅ Subido a `{resultado_subida['objeto_id']}` "
-                                        "— ya podés buscarlo por tema abajo."
-                                    )
-                            except Exception as e:
-                                logger.exception("Error al subir documento")
-                                st.error(f"No se pudo subir el archivo: {e}")
+                if archivo_subido:
+                    col_boton, col_nube = st.columns([1, 4], vertical_alignment="center")
+                    subir = col_boton.button("Subir")
+                    col_nube.caption("☁️ Se guardará en OCI Cloud")
+                    if subir:
+                        err = _validar_upload(archivo_subido)
+                        if err:
+                            st.error(err)
+                        else:
+                            with st.spinner(f"Subiendo {archivo_subido.name}..."):
+                                try:
+                                    data = archivo_subido.read()
+                                    if len(data) > MAX_UPLOAD_BYTES:
+                                        st.error(
+                                            f"El archivo supera el límite de "
+                                            f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
+                                        )
+                                    else:
+                                        resultado_subida = correr(
+                                            _subir_documento(archivo_subido.name, data, USUARIO.user_id)
+                                        )
+                                        st.success(
+                                            f"✅ Subido a `{resultado_subida['objeto_id']}` "
+                                            "— ya puedes buscarlo por tema abajo."
+                                        )
+                                except Exception as e:
+                                    logger.exception("Error al subir documento")
+                                    st.error(f"No se pudo subir el archivo: {e}")
 
-            tema = st.chat_input("¿Sobre qué tema querés generar contenido?")
+            tema = st.chat_input("¿Sobre qué tema quieres generar contenido?")
             if tema:
                 tema_limpio = tema.strip()[:500]
                 if not tema_limpio:
-                    st.warning("Escribí un tema válido.")
+                    st.warning("Escribe un tema válido.")
                 else:
                     st.session_state.timeline_nodos = []
                     contenedor = _contenedor_timeline()
@@ -1928,7 +1932,7 @@ with tab_actividad:
                         if mensaje:
                             st.error(mensaje)
                         else:
-                            st.error("No se pudo iniciar el pipeline. Revisá la actividad en vivo.")
+                            st.error("No se pudo iniciar el pipeline. Revisa la actividad en vivo.")
                             st.caption(str(exc))
 
         elif fase == "esperando_parametro":
@@ -1950,7 +1954,7 @@ with tab_actividad:
                 st.markdown(chips, unsafe_allow_html=True)
 
             with st.chat_message("assistant"):
-                st.markdown(datos_paso.get("pregunta") or "Elegí una opción")
+                st.markdown(datos_paso.get("pregunta") or "Elige una opción")
             if datos_paso.get("aviso"):
                 st.warning(datos_paso["aviso"])
 
@@ -1971,7 +1975,7 @@ with tab_actividad:
                         ):
                             _reanudar({"valor": op["valor"]})
 
-            escrito = st.chat_input("O escribí tu respuesta acá…")
+            escrito = st.chat_input("O escribe tu respuesta aquí…")
             if escrito and escrito.strip():
                 _reanudar({"valor": escrito.strip()})
 
@@ -1984,9 +1988,9 @@ with tab_actividad:
             actuales = datos_conf.get("parametros") or {}
             opciones_conf = datos_conf.get("opciones") or {}
 
-            st.markdown('<span class="nm-badge completado">Confirmá tu pedido</span>', unsafe_allow_html=True)
+            st.markdown('<span class="nm-badge completado">Confirma tu pedido</span>', unsafe_allow_html=True)
             st.write(f"📄 `{objeto_id}`")
-            st.caption("Perfil y formato los elegiste recién. Nicho y nivel de detalle arrancan con valores por defecto: cambiá cualquiera si querés.")
+            st.caption("Perfil y formato los elegiste hace un momento. Nicho y nivel de detalle arrancan con valores por defecto: cambia cualquiera si quieres.")
 
             def _selector(titulo: str, campo: str):
                 ops = opciones_conf.get(campo) or []
@@ -2034,9 +2038,9 @@ with tab_actividad:
             st.markdown('<span class="nm-badge pendiente">Necesito una aclaración</span>', unsafe_allow_html=True)
             st.write(
                 interrupt_data.get("mensaje_aclaracion")
-                or "No encontré ese tema en el documento. ¿Podés aclarar qué buscás?"
+                or "No encontré ese tema en el documento. ¿Puedes aclarar qué buscas?"
             )
-            aclaracion = st.text_area("Tu aclaración (dejá vacío para cancelar)", key="texto_aclaracion")
+            aclaracion = st.text_area("Tu aclaración (deja vacío para cancelar)", key="texto_aclaracion")
             if st.button("Enviar aclaración"):
                 _reanudar({"respuesta": aclaracion.strip()})
 
@@ -2056,7 +2060,7 @@ with tab_actividad:
             )
 
             instruccion = st.text_area(
-                "¿Querés modificar algo? (dejá vacío para terminar)",
+                "¿Quieres modificar algo? (deja vacío para terminar)",
                 key=f"instruccion_modificacion_{vueltas}",
             )
             if st.button("Enviar"):
@@ -2083,4 +2087,4 @@ with tab_actividad:
                 for nodo in st.session_state.timeline_nodos:
                     st.markdown(_html_nodo(nodo), unsafe_allow_html=True)
         elif st.session_state.fase == "inicio":
-            st.caption("Escribí un tema para empezar.")
+            st.caption("Escribe un tema para empezar.")

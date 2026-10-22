@@ -86,7 +86,7 @@ _SEMANTICA_FORMATO: dict[str, str] = {
         "descriptiva en idioma_salida que represente visualmente el concepto de la card. "
         "icono_busqueda es OBLIGATORIO en TODAS las cards y debe ser EXACTAMENTE uno de estos nombres: "
         + ", ".join(ICONOS_FLASHCARD)
-        + ". Elegí el que mejor represente el concepto; si ninguno encaja del todo, el más cercano. Nunca lo dejes en null. "
+        + ". Elige el que mejor represente el concepto; si ninguno encaja del todo, el más cercano. Nunca lo dejes en null. "
         "No inventes nombres fuera de la lista. Nunca incluyas URLs. Todo lo demás en idioma_salida."
     ),
     "Tutorial": (

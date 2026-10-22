@@ -78,12 +78,12 @@ def identidad_desde_claims(claims: Mapping[str, Any]) -> Usuario:
     sub = claims.get("sub")
     if not isinstance(sub, str) or not _USER_ID_VALIDO.fullmatch(sub):
         raise ErrorAutenticacion(
-            "IDENTIDAD_INVALIDA", "No se pudo identificar tu cuenta de Google. Volvé a iniciar sesión."
+            "IDENTIDAD_INVALIDA", "No se pudo identificar tu cuenta de Google. Vuelve a iniciar sesión."
         )
     email = claims.get("email")
     if not isinstance(email, str) or not email.strip():
         raise ErrorAutenticacion(
-            "EMAIL_AUSENTE", "Tu cuenta de Google no compartió un email. Volvé a iniciar sesión."
+            "EMAIL_AUSENTE", "Tu cuenta de Google no compartió un email. Vuelve a iniciar sesión."
         )
     if not _es_verdadero(claims.get("email_verified")):
         raise ErrorAutenticacion(
@@ -139,8 +139,8 @@ def _pantalla_login(st) -> None:
         <div style="max-width:560px;margin:12vh auto 24px auto;text-align:center">
           <div style="font-size:2.4rem;font-weight:800;color:#FFFFFF;margin-bottom:10px">NuevaMente</div>
           <div style="color:#8B96A8;font-size:1.05rem;line-height:1.6;margin-bottom:8px">
-            Convertí documentación técnica en contenido educativo personalizado.
-            Iniciá sesión con tu cuenta de Google para empezar.
+            Convierte documentación técnica en contenido educativo personalizado.
+            Inicia sesión con tu cuenta de Google para empezar.
           </div>
         </div>
         """,
@@ -157,7 +157,7 @@ def _pantalla_login(st) -> None:
         )
     st.markdown(
         '<div style="text-align:center;color:#8B96A8;font-size:0.8rem;margin-top:18px">'
-        "Solo usamos tu cuenta para identificarte. Tus documentos son visibles únicamente para vos."
+        "Solo usamos tu cuenta para identificarte. Tus documentos son visibles únicamente para ti."
         "</div>",
         unsafe_allow_html=True,
     )

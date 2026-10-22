@@ -202,7 +202,7 @@ def get_llm(
         raise LLMClientError(
             f"Todos los modelos de Groq están sin cupo (TPM/RPM/TPD). "
             f"Pedido actual: {tokens_estimados} tokens. "
-            f"Esperá a que se resetee la cuota diaria o subí de plan. "
+            f"Espera a que se resetee la cuota diaria o sube de plan. "
             f"Estado actual: {estado}"
         )
 

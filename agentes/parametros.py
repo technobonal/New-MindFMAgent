@@ -61,12 +61,12 @@ PREFIJO_FUENTES = "fuentes/"
 MAX_REPREGUNTAS = 2
 
 MENSAJE_SIN_DOCUMENTOS = (
-    "No hay documentos disponibles en tu espacio. Subí uno y volvé a intentarlo."
+    "No hay documentos disponibles en tu espacio. Sube uno y vuelve a intentarlo."
 )
 MENSAJE_SIN_RESPUESTA_VALIDA = (
-    "No pude identificar tu elección. Empezá una consulta nueva y elegí una de las opciones."
+    "No pude identificar tu elección. Empieza una consulta nueva y elige una de las opciones."
 )
-MENSAJE_AVISO_OPCION = "No reconocí esa opción. Elegí una de las opciones o escribila de nuevo."
+MENSAJE_AVISO_OPCION = "No reconocí esa opción. Elige una de las opciones o escríbela de nuevo."
 
 CAMPOS_CONFIRMACION = ("perfil_destinatario", "formato_salida", "nicho_sector", "nivel_detalle")
 
@@ -327,7 +327,7 @@ def nodo_parametros(state: AgentState) -> dict:
         if detectado and not formato:
             aviso_formato = (
                 f"El formato '{etiqueta('formato_salida', detectado)}' todavía no está "
-                "disponible. Elegí uno de estos."
+                "disponible. Elige uno de estos."
             )
 
     pendientes = [
@@ -355,7 +355,7 @@ def nodo_parametros(state: AgentState) -> dict:
             return {"ejecucion_confirmada": False, "status": "error", "error": MENSAJE_SIN_DOCUMENTOS}
         valor, motivo = _preguntar(
             parametro="documento",
-            pregunta="¿Con qué documento querés trabajar?",
+            pregunta="¿Con qué documento quieres trabajar?",
             opciones=[{"valor": c, "etiqueta": c, "ayuda": ""} for c in candidatos],
             paso=pendientes.index("documento") + 1,
             total=total,
@@ -387,7 +387,7 @@ def nodo_parametros(state: AgentState) -> dict:
     if "formato_salida" in pendientes:
         valor, motivo = _preguntar(
             parametro="formato_salida",
-            pregunta="¿En qué formato lo querés?",
+            pregunta="¿En qué formato lo quieres?",
             opciones=opciones_parametro("formato_salida"),
             paso=pendientes.index("formato_salida") + 1,
             total=total,
