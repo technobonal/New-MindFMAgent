@@ -23,11 +23,11 @@ from seguridad.rate_limiter import RateLimiter
 
 log = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Sos el supervisor de un sistema que transforma documentación técnica en contenido educativo.
+SYSTEM_PROMPT = """Eres el supervisor de un sistema que transforma documentación técnica en contenido educativo.
 Tu única tarea es extraer el tema de la solicitud del usuario y devolver un objeto IntencionOut con:
 - tema_consulta: el tema específico que el usuario quiere aprender, en pocas palabras. No incluyas el perfil del destinatario, el formato pedido, el sector ni el nivel de detalle, ni cantidades como "5 preguntas".
-No generás contenido educativo vos mismo. No evalúas si el tema existe en el documento — eso lo hace el Investigador.
-Si la solicitud no menciona un tema concreto, devolvé la solicitud completa tal cual."""
+No generas contenido educativo tú mismo. No evalúas si el tema existe en el documento — eso lo hace el Investigador.
+Si la solicitud no menciona un tema concreto, devuelve la solicitud completa tal cual."""
 
 
 class IntencionOut(BaseModel):
